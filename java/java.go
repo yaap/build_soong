@@ -2738,6 +2738,10 @@ func (a *DexImport) JacocoReportClassesFile() android.Path {
 	return nil
 }
 
+func (a *DexImport) LintDepSets() LintDepSets {
+	return LintDepSets{}
+}
+
 func (j *DexImport) IsInstallable() bool {
 	return true
 }
