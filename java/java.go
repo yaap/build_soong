@@ -1683,6 +1683,9 @@ func (j *Module) compile(ctx android.ModuleContext, aaptSrcJar android.Path) {
 		j.linter.compileSdkVersion = lintSDKVersionString(j.sdkVersion())
 		j.linter.javaLanguageLevel = flags.javaVersion.String()
 		j.linter.kotlinLanguageLevel = "1.3"
+		if j.ApexVariationName() != "" && ctx.Config().UnbundledBuild() {
+			j.linter.buildModuleReportZip = true
+		}
 		j.linter.lint(ctx)
 	}
 
