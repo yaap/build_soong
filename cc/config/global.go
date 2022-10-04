@@ -285,6 +285,11 @@ var (
 		// New warnings to be fixed after clang-r475365
 		"-Wno-error=single-bit-bitfield-constant-conversion", // http://b/243965903
 		"-Wno-error=enum-constexpr-conversion",               // http://b/243964282
+		// YAAP additions since we will be minimally updating external platform
+		"-Wno-error=deprecated-non-prototype",
+		"-Wno-error=strict-prototypes",
+		"-Wno-error=enum-conversion",
+		"-Wno-error=unused-value",
 	}
 
 	noOverride64GlobalCflags = []string{}
