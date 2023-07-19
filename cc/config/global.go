@@ -290,6 +290,13 @@ var (
 		"-Wno-error=strict-prototypes",
 		"-Wno-error=enum-conversion",
 		"-Wno-error=unused-value",
+		"-Wno-error=single-bit-bitfield-constant-conversion",
+		"-Wno-error=unused-private-field",
+		"-Wno-unused-command-line-argument",
+		"-Wno-error=thread-safety-analysis",
+		"-Wno-error=unguarded-availability",
+		"-Wno-error=logical-op-parentheses",
+		"-Wno-error=shadow-uncaptured-local",
 	}
 
 	noOverride64GlobalCflags = []string{}
