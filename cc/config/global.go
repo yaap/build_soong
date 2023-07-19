@@ -255,6 +255,7 @@ var (
 		"-Wno-error=thread-safety-analysis",
 		"-Wno-error=unguarded-availability",
 		"-Wno-error=logical-op-parentheses",
+		"-Wno-error=shadow-uncaptured-local",
 	}
 
 	noOverrideExternalGlobalCflags = []string{
@@ -313,8 +314,8 @@ var (
 
 	// prebuilts/clang default settings.
 	ClangDefaultBase         = "prebuilts/clang/host"
-	ClangDefaultVersion      = "clang-r487747c"
-	ClangDefaultShortVersion = "17.0.2"
+	ClangDefaultVersion      = "clang-r498229"
+	ClangDefaultShortVersion = "17.0.3"
 
 	// Directories with warnings from Android.bp files.
 	WarningAllowedProjects = []string{
