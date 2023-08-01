@@ -155,6 +155,8 @@ func (lto *lto) flags(ctx BaseModuleContext, flags Flags) Flags {
 				"-Wl,-mllvm,-polly-scheduling=dynamic")
 		flags.Local.LdFlags = append(flags.Local.LdFlags,
 				"-Wl,-mllvm,-polly-scheduling-chunksize=1")
+		flags.Local.LdFlags = append(flags.Local.LdFlags,
+				"-Wl,-plugin-opt,-import-instr-limit=40")
 	}
 	return flags
 }
