@@ -270,6 +270,8 @@ type SanitizeUserProps struct {
 	// This should not be used in Android 11+ : https://source.android.com/devices/tech/debug/scudo
 	// deprecated
 	Scudo *bool `android:"arch_variant"`
+	// mimalloc allocator
+	Mimalloc *bool `android:"arch_variant"`
 	// shadow-call-stack sanitizer, only available on arm64/riscv64.
 	Scs *bool `android:"arch_variant"`
 	// Memory-tagging, only available on arm64
@@ -350,6 +352,8 @@ type sanitizeMutatedProperties struct {
 	Integer_overflow *bool `blueprint:"mutated"`
 	// Whether scudo sanitizer is enabled for this module
 	Scudo *bool `blueprint:"mutated"`
+	// Whether mimalloc is used
+	Mimalloc *bool `blueprint:"mutated"`
 	// Whether shadow-call-stack sanitizer is enabled for this module.
 	Scs *bool `blueprint:"mutated"`
 	// Whether Memory-tagging is enabled for this module
@@ -450,6 +454,7 @@ func (p *sanitizeMutatedProperties) copyUserPropertiesToMutated(userProps *Sanit
 	p.Safestack = userProps.Safestack
 	p.Scs = userProps.Scs
 	p.Scudo = userProps.Scudo
+	p.Mimalloc = userProps.Mimalloc
 	p.Thread = userProps.Thread
 	p.Undefined = userProps.Undefined
 	p.Writeonly = userProps.Writeonly
@@ -550,6 +555,10 @@ func (sanitize *sanitize) begin(ctx BaseModuleContext) {
 
 		if found, globalSanitizers = removeFromList("scudo", globalSanitizers); found && s.Scudo == nil {
 			s.Scudo = proptools.BoolPtr(true)
+		}
+
+		if found, globalSanitizers = removeFromList("mimalloc", globalSanitizers); found && s.Mimalloc == nil {
+			s.Mimalloc = proptools.BoolPtr(true)
 		}
 
 		if found, globalSanitizers = removeFromList("hwaddress", globalSanitizers); found && s.Hwaddress == nil {
@@ -691,6 +700,7 @@ func (sanitize *sanitize) begin(ctx BaseModuleContext) {
 		s.Hwaddress = nil
 		s.Thread = nil
 		s.Scudo = nil
+		s.Mimalloc = nil
 		s.Fuzzer = nil
 		s.Cfi = nil
 		s.Diag.Cfi = nil
@@ -731,7 +741,7 @@ func (sanitize *sanitize) begin(ctx BaseModuleContext) {
 
 	if ctx.Os() != android.Windows && (Bool(s.All_undefined) || Bool(s.Undefined) || Bool(s.Address) || Bool(s.Thread) ||
 		Bool(s.Fuzzer) || Bool(s.Safestack) || Bool(s.Cfi) || Bool(s.Integer_overflow) || len(s.Misc_undefined) > 0 ||
-		Bool(s.Scudo) || Bool(s.Hwaddress) || Bool(s.Scs) || Bool(s.Memtag_heap) || Bool(s.Memtag_stack) ||
+		Bool(s.Scudo) || Bool(s.Mimalloc) || Bool(s.Hwaddress) || Bool(s.Scs) || Bool(s.Memtag_heap) || Bool(s.Memtag_stack) ||
 		Bool(s.Memtag_globals)) {
 		sanitize.Properties.SanitizerEnabled = true
 	}
@@ -739,6 +749,11 @@ func (sanitize *sanitize) begin(ctx BaseModuleContext) {
 	// Disable Scudo if ASan or TSan is enabled, or if it's disabled globally.
 	if Bool(s.Address) || Bool(s.Thread) || Bool(s.Hwaddress) || ctx.Config().DisableScudo() {
 		s.Scudo = nil
+	}
+
+	// Disable mimalloc if disabled globally
+	if ctx.Config().DisableMimalloc() {
+		s.Mimalloc = nil
 	}
 
 	if Bool(s.Hwaddress) {
@@ -1590,6 +1605,10 @@ func sanitizerRuntimeMutator(mctx android.BottomUpMutatorContext) {
 
 		if Bool(sanProps.Scudo) {
 			sanitizers = append(sanitizers, "scudo")
+		}
+
+		if Bool(sanProps.Mimalloc) {
+			sanitizers = append(sanitizers, "mimalloc")
 		}
 
 		if Bool(sanProps.Scs) {

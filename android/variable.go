@@ -78,6 +78,15 @@ type variableProperties struct {
 			Header_libs         []string `android:"arch_variant"`
 		} `android:"arch_variant"`
 
+		Malloc_use_mimalloc struct {
+			Cflags              []string `android:"arch_variant"`
+			Shared_libs         []string `android:"arch_variant"`
+			Whole_static_libs   []string `android:"arch_variant"`
+			Exclude_static_libs []string `android:"arch_variant"`
+			Srcs                []string `android:"arch_variant"`
+			Header_libs         []string `android:"arch_variant"`
+		} `android:"arch_variant"`
+
 		Malloc_not_svelte struct {
 			Cflags              []string `android:"arch_variant"`
 			Shared_libs         []string `android:"arch_variant"`
@@ -285,6 +294,7 @@ type ProductVariables struct {
 	Always_use_prebuilt_sdks     *bool    `json:",omitempty"`
 	Skip_boot_jars_check         *bool    `json:",omitempty"`
 	Malloc_use_scudo             *bool    `json:",omitempty"`
+	Malloc_use_mimalloc          *bool    `json:",omitempty"`
 	Malloc_not_svelte            *bool    `json:",omitempty"`
 	Malloc_zero_contents         *bool    `json:",omitempty"`
 	Malloc_pattern_fill_contents *bool    `json:",omitempty"`
@@ -612,6 +622,7 @@ func (v *ProductVariables) SetDefaultConfig() {
 		AAPTPrebuiltDPI:     []string{"xhdpi", "xxhdpi"},
 
 		Malloc_use_scudo:             boolPtr(false),
+		Malloc_use_mimalloc:          boolPtr(false),
 		Malloc_not_svelte:            boolPtr(true),
 		Malloc_zero_contents:         boolPtr(true),
 		Malloc_pattern_fill_contents: boolPtr(false),
