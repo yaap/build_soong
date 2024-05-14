@@ -59,6 +59,7 @@ type LTOProperties struct {
 
 	// Use --lto-O0 flag.
 	Lto_O0 *bool
+	Lto_Instr100 *bool
 }
 
 type lto struct {
@@ -161,7 +162,7 @@ func (lto *lto) flags(ctx BaseModuleContext, flags Flags) Flags {
 
 		// Reduce the inlining threshold for a better balance of binary size and
 		// performance.
-		if !ctx.Darwin() {
+		if !ctx.Darwin() && !Bool(lto.Properties.Lto_Instr100) {
 			if ctx.isAfdoCompile() || lto.ThinLTO() {
 				ltoLdFlags = append(ltoLdFlags, "-Wl,-plugin-opt,-import-instr-limit=40")
 			} else {
