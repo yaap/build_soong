@@ -17,6 +17,7 @@ package terminal
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"android/soong/ui/status"
 )
@@ -58,6 +59,7 @@ func (s *simpleStatusOutput) FinishAction(result status.ActionResult, counts sta
 	}
 
 	progress := s.formatter.progress(counts) + str
+	writeProgressFile(counts)
 
 	output := s.formatter.result(result)
 	if !s.keepANSI {
@@ -68,6 +70,27 @@ func (s *simpleStatusOutput) FinishAction(result status.ActionResult, counts sta
 		fmt.Fprint(s.writer, progress, "\n", output)
 	} else {
 		fmt.Fprintln(s.writer, progress)
+	}
+}
+
+func writeProgressFile(counts status.Counts) {
+	f, err := os.Create("build_status.txt")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	percent := 100*counts.FinishedActions/counts.TotalActions
+	output := fmt.Sprintf("%d/%d,%d\n", counts.FinishedActions, counts.TotalActions, percent)
+	_, err = f.WriteString(output)
+	if err != nil {
+		fmt.Println(err)
+		f.Close()
+		return
+	}
+	err = f.Close()
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
 }
 
