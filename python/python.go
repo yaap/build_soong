@@ -59,7 +59,7 @@ type VersionProperties struct {
 	// list of the Python libraries used only for this Python version.
 	Libs []string `android:"arch_variant"`
 
-	// whether the binary is required to be built with embedded launcher for this version, defaults to false.
+	// whether the binary is required to be built with embedded launcher for this version, defaults to true.
 	Embedded_launcher *bool // TODO(b/174041232): Remove this property
 }
 
@@ -151,6 +151,8 @@ type PythonLibraryModule struct {
 	// The zip file containing the current module's source/data files, with the
 	// source files precompiled.
 	precompiledSrcsZip android.Path
+
+	sourceProperties android.SourceProperties
 }
 
 // newModule generates new Python base module
@@ -203,7 +205,7 @@ func (p *PythonLibraryModule) getBaseProperties() *BaseProperties {
 var _ pythonDependency = (*PythonLibraryModule)(nil)
 
 func (p *PythonLibraryModule) init() android.Module {
-	p.AddProperties(&p.properties, &p.protoProperties)
+	p.AddProperties(&p.properties, &p.protoProperties, &p.sourceProperties)
 	android.InitAndroidArchModule(p, p.hod, p.multilib)
 	android.InitDefaultableModule(p)
 	return p
@@ -421,6 +423,11 @@ func (p *PythonLibraryModule) AddDepsOnPythonLauncherAndStdlib(ctx android.Botto
 func (p *PythonLibraryModule) GenerateAndroidBuildActions(ctx android.ModuleContext) {
 	expandedSrcs := android.PathsForModuleSrcExcludes(ctx, p.properties.Srcs, p.properties.Exclude_srcs)
 	android.SetProvider(ctx, blueprint.SrcsFileProviderKey, blueprint.SrcsFileProviderData{SrcPaths: expandedSrcs.Strings()})
+	// Keep before any early returns.
+	android.SetProvider(ctx, android.TestOnlyProviderKey, android.TestModuleInformation{
+		TestOnly:       Bool(p.sourceProperties.Test_only),
+		TopLevelTarget: p.sourceProperties.Top_level_test_target,
+	})
 
 	// expand data files from "data" property.
 	expandedData := android.PathsForModuleSrc(ctx, p.properties.Data)
@@ -499,8 +506,8 @@ func (p *PythonLibraryModule) genModulePathMappings(ctx android.ModuleContext, p
 	}
 
 	for _, d := range expandedData {
-		if d.Ext() == pyExt || d.Ext() == protoExt {
-			ctx.PropertyErrorf("data", "found (.py|.proto) file: %q!", d.String())
+		if d.Ext() == pyExt {
+			ctx.PropertyErrorf("data", "found (.py) file: %q!", d.String())
 			continue
 		}
 		runfilesPath := filepath.Join(pkgPath, d.Rel())
@@ -516,19 +523,19 @@ func (p *PythonLibraryModule) createSrcsZip(ctx android.ModuleContext, pkgPath s
 	relativeRootMap := make(map[string]android.Paths)
 	var protoSrcs android.Paths
 	addPathMapping := func(path pathMapping) {
-		// handle proto sources separately
-		if path.src.Ext() == protoExt {
-			protoSrcs = append(protoSrcs, path.src)
-		} else {
-			relativeRoot := strings.TrimSuffix(path.src.String(), path.src.Rel())
-			relativeRootMap[relativeRoot] = append(relativeRootMap[relativeRoot], path.src)
-		}
+		relativeRoot := strings.TrimSuffix(path.src.String(), path.src.Rel())
+		relativeRootMap[relativeRoot] = append(relativeRootMap[relativeRoot], path.src)
 	}
 
 	// "srcs" or "data" properties may contain filegroups so it might happen that
 	// the root directory for each source path is different.
 	for _, path := range p.srcsPathMappings {
-		addPathMapping(path)
+		// handle proto sources separately
+		if path.src.Ext() == protoExt {
+			protoSrcs = append(protoSrcs, path.src)
+		} else {
+			addPathMapping(path)
+		}
 	}
 	for _, path := range p.dataPathMappings {
 		addPathMapping(path)
@@ -545,7 +552,6 @@ func (p *PythonLibraryModule) createSrcsZip(ctx android.ModuleContext, pkgPath s
 			var stagedProtoSrcs android.Paths
 			for _, srcFile := range protoSrcs {
 				stagedProtoSrc := pkgPathStagingDir.Join(ctx, pkgPath, srcFile.Rel())
-				rule.Command().Text("mkdir -p").Flag(filepath.Base(stagedProtoSrc.String()))
 				rule.Command().Text("cp -f").Input(srcFile).Output(stagedProtoSrc)
 				stagedProtoSrcs = append(stagedProtoSrcs, stagedProtoSrc)
 			}

@@ -15,9 +15,6 @@
 package codegen
 
 import (
-	"fmt"
-
-	"android/soong/aconfig"
 	"android/soong/android"
 	"android/soong/java"
 
@@ -77,11 +74,11 @@ func (callbacks *JavaAconfigDeclarationsLibraryCallbacks) DepsMutator(module *ja
 	}
 }
 
-func (callbacks *JavaAconfigDeclarationsLibraryCallbacks) GenerateSourceJarBuildActions(module *java.GeneratedJavaLibraryModule, ctx android.ModuleContext) android.Path {
+func (callbacks *JavaAconfigDeclarationsLibraryCallbacks) GenerateSourceJarBuildActions(module *java.GeneratedJavaLibraryModule, ctx android.ModuleContext) (android.Path, android.Path) {
 	// Get the values that came from the global RELEASE_ACONFIG_VALUE_SETS flag
 	declarationsModules := ctx.GetDirectDepsWithTag(declarationsTag)
 	if len(declarationsModules) != 1 {
-		panic(fmt.Errorf("Exactly one aconfig_declarations property required"))
+		panic("Exactly one aconfig_declarations property required")
 	}
 	declarations, _ := android.OtherModuleProvider(ctx, declarationsModules[0], android.AconfigDeclarationsProviderKey)
 
@@ -92,12 +89,12 @@ func (callbacks *JavaAconfigDeclarationsLibraryCallbacks) GenerateSourceJarBuild
 	if !isModeSupported(mode) {
 		ctx.PropertyErrorf("mode", "%q is not a supported mode", mode)
 	}
-	// TODO: uncomment this part after internal clean up
-	//if mode == "exported" && !declarations.Exportable {
-	//	// if mode is exported, the corresponding aconfig_declaration must mark its
-	//	// exportable property true
-	//	ctx.PropertyErrorf("mode", "exported mode requires its aconfig_declaration has exportable prop true")
-	//}
+
+	if mode == "exported" && !declarations.Exportable {
+		// if mode is exported, the corresponding aconfig_declaration must mark its
+		// exportable property true
+		ctx.PropertyErrorf("mode", "exported mode requires its aconfig_declaration has exportable prop true")
+	}
 
 	ctx.Build(pctx, android.BuildParams{
 		Rule:        javaRule,
@@ -116,16 +113,22 @@ func (callbacks *JavaAconfigDeclarationsLibraryCallbacks) GenerateSourceJarBuild
 		module.AddJarJarRenameRule(declarations.Package+".Flags", "")
 		module.AddJarJarRenameRule(declarations.Package+".FeatureFlags", "")
 		module.AddJarJarRenameRule(declarations.Package+".FeatureFlagsImpl", "")
+		module.AddJarJarRenameRule(declarations.Package+".CustomFeatureFlags", "")
 		module.AddJarJarRenameRule(declarations.Package+".FakeFeatureFlagsImpl", "")
 	}
 
-	android.SetProvider(ctx, aconfig.CodegenInfoProvider, aconfig.CodegenInfo{
+	android.SetProvider(ctx, android.CodegenInfoProvider, android.CodegenInfo{
 		AconfigDeclarations:          []string{declarationsModules[0].Name()},
 		IntermediateCacheOutputPaths: android.Paths{declarations.IntermediateCacheOutputPath},
 		Srcjars:                      android.Paths{srcJarPath},
+		ModeInfos: map[string]android.ModeInfo{
+			ctx.ModuleName(): {
+				Container: declarations.Container,
+				Mode:      mode,
+			}},
 	})
 
-	return srcJarPath
+	return srcJarPath, declarations.IntermediateCacheOutputPath
 }
 
 func isModeSupported(mode string) bool {

@@ -98,7 +98,6 @@ func newContext(configuration android.Config) *android.Context {
 	ctx := android.NewContext(configuration)
 	ctx.SetNameInterface(newNameResolver(configuration))
 	ctx.SetAllowMissingDependencies(configuration.AllowMissingDependencies())
-	ctx.AddIncludeTags(configuration.IncludeTags()...)
 	ctx.AddSourceRootDirs(configuration.SourceRootDirs()...)
 	return ctx
 }
@@ -108,7 +107,7 @@ func needToWriteNinjaHint(ctx *android.Context) bool {
 	case "always":
 		return true
 	case "depend":
-		if _, err := os.Stat(filepath.Join(ctx.Config().OutDir(), ".ninja_log")); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(topDir, ctx.Config().OutDir(), ".ninja_log")); errors.Is(err, os.ErrNotExist) {
 			return true
 		}
 	}

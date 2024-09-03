@@ -19,6 +19,7 @@ package cc
 // functions.
 
 import (
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -45,18 +46,18 @@ var (
 		blueprint.RuleParams{
 			Depfile:     "${out}.d",
 			Deps:        blueprint.DepsGCC,
-			Command:     "$relPwd ${config.CcWrapper}$ccCmd -c $cFlags -MD -MF ${out}.d -o $out $in",
+			Command:     "$relPwd ${config.CcWrapper}$ccCmd -c $cFlags -MD -MF ${out}.d -o $out $in$postCmd",
 			CommandDeps: []string{"$ccCmd"},
 		},
-		"ccCmd", "cFlags")
+		"ccCmd", "cFlags", "postCmd")
 
 	// Rule to invoke gcc with given command and flags, but no dependencies.
 	ccNoDeps = pctx.AndroidStaticRule("ccNoDeps",
 		blueprint.RuleParams{
-			Command:     "$relPwd $ccCmd -c $cFlags -o $out $in",
+			Command:     "$relPwd $ccCmd -c $cFlags -o $out $in$postCmd",
 			CommandDeps: []string{"$ccCmd"},
 		},
-		"ccCmd", "cFlags")
+		"ccCmd", "cFlags", "postCmd")
 
 	// Rules to invoke ld to link binaries. Uses a .rsp file to list dependencies, as there may
 	// be many.
@@ -330,6 +331,15 @@ var (
 			CommandDeps: []string{"$cxxExtractor", "$kytheVnames"},
 		},
 		"cFlags")
+
+	// Function pointer for producting staticlibs from rlibs. Corresponds to
+	// rust.TransformRlibstoStaticlib(), initialized in soong-rust (rust/builder.go init())
+	//
+	// This is required since soong-rust depends on soong-cc, so soong-cc cannot depend on soong-rust
+	// without resulting in a circular dependency. Setting this function pointer in soong-rust allows
+	// soong-cc to call into this particular function.
+	TransformRlibstoStaticlib (func(ctx android.ModuleContext, mainSrc android.Path, deps []RustRlibDep,
+		outputFile android.WritablePath) android.Path) = nil
 )
 
 func PwdPrefix() string {
@@ -375,13 +385,14 @@ type builderFlags struct {
 	localCppFlags        string
 	localLdFlags         string
 
-	libFlags      string // Flags to add to the linker directly after specifying libraries to link.
-	extraLibFlags string // Flags to add to the linker last.
-	tidyFlags     string // Flags that apply to clang-tidy
-	sAbiFlags     string // Flags that apply to header-abi-dumps
-	aidlFlags     string // Flags that apply to aidl source files
-	rsFlags       string // Flags that apply to renderscript source files
-	toolchain     config.Toolchain
+	noOverrideFlags string // Flags appended at the end so they are not overridden.
+	libFlags        string // Flags to add to the linker directly after specifying libraries to link.
+	extraLibFlags   string // Flags to add to the linker last.
+	tidyFlags       string // Flags that apply to clang-tidy
+	sAbiFlags       string // Flags that apply to header-abi-dumps
+	aidlFlags       string // Flags that apply to aidl source files
+	rsFlags         string // Flags that apply to renderscript source files
+	toolchain       config.Toolchain
 
 	// True if these extra features are enabled.
 	tidy          bool
@@ -389,6 +400,7 @@ type builderFlags struct {
 	gcovCoverage  bool
 	sAbiDump      bool
 	emitXrefs     bool
+	clangVerify   bool
 
 	assemblerWithCpp bool // True if .s files should be processed with the c preprocessor.
 
@@ -473,7 +485,7 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		coverageFiles = make(android.Paths, 0, len(srcFiles))
 	}
 	var kytheFiles android.Paths
-	if flags.emitXrefs {
+	if flags.emitXrefs && ctx.Module() == ctx.PrimaryModule() {
 		kytheFiles = make(android.Paths, 0, len(srcFiles))
 	}
 
@@ -485,7 +497,8 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		flags.localCommonFlags + " " +
 		flags.localToolingCFlags + " " +
 		flags.localConlyFlags + " " +
-		flags.systemIncludeFlags
+		flags.systemIncludeFlags + " " +
+		flags.noOverrideFlags
 
 	cflags := flags.globalCommonFlags + " " +
 		flags.globalCFlags + " " +
@@ -493,7 +506,8 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		flags.localCommonFlags + " " +
 		flags.localCFlags + " " +
 		flags.localConlyFlags + " " +
-		flags.systemIncludeFlags
+		flags.systemIncludeFlags + " " +
+		flags.noOverrideFlags
 
 	toolingCppflags := flags.globalCommonFlags + " " +
 		flags.globalToolingCFlags + " " +
@@ -501,7 +515,8 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		flags.localCommonFlags + " " +
 		flags.localToolingCFlags + " " +
 		flags.localToolingCppFlags + " " +
-		flags.systemIncludeFlags
+		flags.systemIncludeFlags + " " +
+		flags.noOverrideFlags
 
 	cppflags := flags.globalCommonFlags + " " +
 		flags.globalCFlags + " " +
@@ -509,7 +524,8 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		flags.localCommonFlags + " " +
 		flags.localCFlags + " " +
 		flags.localCppFlags + " " +
-		flags.systemIncludeFlags
+		flags.systemIncludeFlags + " " +
+		flags.noOverrideFlags
 
 	asflags := flags.globalCommonFlags + " " +
 		flags.globalAsFlags + " " +
@@ -520,26 +536,6 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 	var sAbiDumpFiles android.Paths
 	if flags.sAbiDump {
 		sAbiDumpFiles = make(android.Paths, 0, len(srcFiles))
-	}
-
-	cflags += " ${config.NoOverrideGlobalCflags}"
-	toolingCflags += " ${config.NoOverrideGlobalCflags}"
-	cppflags += " ${config.NoOverrideGlobalCflags}"
-	toolingCppflags += " ${config.NoOverrideGlobalCflags}"
-
-	if flags.toolchain.Is64Bit() {
-		cflags += " ${config.NoOverride64GlobalCflags}"
-		toolingCflags += " ${config.NoOverride64GlobalCflags}"
-		cppflags += " ${config.NoOverride64GlobalCflags}"
-		toolingCppflags += " ${config.NoOverride64GlobalCflags}"
-	}
-
-	modulePath := ctx.ModuleDir()
-	if android.IsThirdPartyPath(modulePath) {
-		cflags += " ${config.NoOverrideExternalGlobalCflags}"
-		toolingCflags += " ${config.NoOverrideExternalGlobalCflags}"
-		cppflags += " ${config.NoOverrideExternalGlobalCflags}"
-		toolingCppflags += " ${config.NoOverrideExternalGlobalCflags}"
 	}
 
 	// Multiple source files have build rules usually share the same cFlags or tidyFlags.
@@ -596,6 +592,7 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		var moduleToolingFlags string
 
 		var ccCmd string
+		var postCmd string
 		tidy := flags.tidy
 		coverage := flags.gcovCoverage
 		dump := flags.sAbiDump
@@ -623,6 +620,10 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 			ccCmd = "clang++"
 			moduleFlags = cppflags
 			moduleToolingFlags = toolingCppflags
+		case ".rs":
+			// A source provider (e.g. rust_bindgen) may provide both rs and c files.
+			// Ignore the rs files.
+			continue
 		case ".h", ".hpp":
 			ctx.PropertyErrorf("srcs", "Header file %s is not supported, instead use export_include_dirs or local_include_dirs.", srcFile)
 			continue
@@ -635,6 +636,10 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 		ccDesc := ccCmd
 
 		ccCmd = "${config.ClangBin}/" + ccCmd
+
+		if flags.clangVerify {
+			postCmd = " && touch " + objFile.String()
+		}
 
 		var implicitOutputs android.WritablePaths
 		if coverage {
@@ -652,13 +657,14 @@ func transformSourceToObj(ctx ModuleContext, subdir string, srcFiles, noTidySrcs
 			Implicits:       cFlagsDeps,
 			OrderOnly:       pathDeps,
 			Args: map[string]string{
-				"cFlags": shareFlags("cFlags", moduleFlags),
-				"ccCmd":  ccCmd, // short and not shared
+				"cFlags":  shareFlags("cFlags", moduleFlags),
+				"ccCmd":   ccCmd, // short and not shared
+				"postCmd": postCmd,
 			},
 		})
 
 		// Register post-process build statements (such as for tidy or kythe).
-		if emitXref {
+		if emitXref && ctx.Module() == ctx.PrimaryModule() {
 			kytheFile := android.ObjPathWithExt(ctx, subdir, srcFile, "kzip")
 			ctx.Build(pctx, android.BuildParams{
 				Rule:        kytheExtract,
@@ -789,6 +795,47 @@ func transformObjToStaticLib(ctx android.ModuleContext,
 	}
 }
 
+// Generate a Rust staticlib from a list of rlibDeps. Returns nil if TransformRlibstoStaticlib is nil or rlibDeps is empty.
+func generateRustStaticlib(ctx android.ModuleContext, rlibDeps []RustRlibDep) android.Path {
+	if TransformRlibstoStaticlib == nil && len(rlibDeps) > 0 {
+		// This should only be reachable if a module defines static_rlibs and
+		// soong-rust hasn't been loaded alongside soong-cc (e.g. in soong-cc tests).
+		panic(fmt.Errorf("TransformRlibstoStaticlib is not set and static_rlibs is defined in %s", ctx.ModuleName()))
+	} else if len(rlibDeps) == 0 {
+		return nil
+	}
+
+	output := android.PathForModuleOut(ctx, "generated_rust_staticlib", "lib"+ctx.ModuleName()+"_rust_staticlib.a")
+	stemFile := output.ReplaceExtension(ctx, "rs")
+	crateNames := []string{}
+
+	// Collect crate names
+	for _, lib := range rlibDeps {
+		// Exclude libstd so this can support no_std builds.
+		if lib.CrateName != "libstd" {
+			crateNames = append(crateNames, lib.CrateName)
+		}
+	}
+
+	// Deduplicate any crateNames just to be safe
+	crateNames = android.FirstUniqueStrings(crateNames)
+
+	// Write the source file
+	android.WriteFileRule(ctx, stemFile, genRustStaticlibSrcFile(crateNames))
+
+	return TransformRlibstoStaticlib(ctx, stemFile, rlibDeps, output)
+}
+
+func genRustStaticlibSrcFile(crateNames []string) string {
+	lines := []string{
+		"// @Soong generated Source",
+	}
+	for _, crate := range crateNames {
+		lines = append(lines, fmt.Sprintf("extern crate %s;", crate))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Generate a rule for compiling multiple .o files, plus static libraries, whole static libraries,
 // and shared libraries, to a shared library (.so) or dynamic executable
 func transformObjToDynamicBinary(ctx android.ModuleContext,
@@ -869,14 +916,15 @@ func transformObjToDynamicBinary(ctx android.ModuleContext,
 // Generate a rule to combine .dump sAbi dump files from multiple source files
 // into a single .ldump sAbi dump file
 func transformDumpToLinkedDump(ctx android.ModuleContext, sAbiDumps android.Paths, soFile android.Path,
-	baseName, exportedHeaderFlags string, symbolFile android.OptionalPath,
-	excludedSymbolVersions, excludedSymbolTags []string,
-	api string) android.OptionalPath {
+	baseName string, exportedIncludeDirs []string, symbolFile android.OptionalPath,
+	excludedSymbolVersions, excludedSymbolTags, includedSymbolTags []string,
+	api string, isLlndk bool) android.Path {
 
 	outputFile := android.PathForModuleOut(ctx, baseName+".lsdump")
 
 	implicits := android.Paths{soFile}
 	symbolFilterStr := "-so " + soFile.String()
+	exportedHeaderFlags := android.JoinWithPrefix(exportedIncludeDirs, "-I")
 
 	if symbolFile.Valid() {
 		implicits = append(implicits, symbolFile.Path())
@@ -887,6 +935,12 @@ func transformDumpToLinkedDump(ctx android.ModuleContext, sAbiDumps android.Path
 	}
 	for _, tag := range excludedSymbolTags {
 		symbolFilterStr += " --exclude-symbol-tag " + tag
+	}
+	for _, tag := range includedSymbolTags {
+		symbolFilterStr += " --include-symbol-tag " + tag
+	}
+	if isLlndk {
+		symbolFilterStr += " --symbol-tag-policy MatchTagOnly"
 	}
 	apiLevelsJson := android.GetApiLevelsJson(ctx)
 	implicits = append(implicits, apiLevelsJson)
@@ -901,13 +955,7 @@ func transformDumpToLinkedDump(ctx android.ModuleContext, sAbiDumps android.Path
 	}
 	if ctx.Config().UseRBE() && ctx.Config().IsEnvTrue("RBE_ABI_LINKER") {
 		rule = sAbiLinkRE
-		rbeImplicits := implicits.Strings()
-		for _, p := range strings.Split(exportedHeaderFlags, " ") {
-			if len(p) > 2 {
-				// Exclude the -I prefix.
-				rbeImplicits = append(rbeImplicits, p[2:])
-			}
-		}
+		rbeImplicits := append(implicits.Strings(), exportedIncludeDirs...)
 		args["implicitInputs"] = strings.Join(rbeImplicits, ",")
 	}
 	ctx.Build(pctx, android.BuildParams{
@@ -918,7 +966,7 @@ func transformDumpToLinkedDump(ctx android.ModuleContext, sAbiDumps android.Path
 		Implicits:   implicits,
 		Args:        args,
 	})
-	return android.OptionalPathForPath(outputFile)
+	return outputFile
 }
 
 func transformAbiDumpToAbiDiff(ctx android.ModuleContext, inputDump, referenceDump android.Path,

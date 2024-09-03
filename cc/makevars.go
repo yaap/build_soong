@@ -28,6 +28,16 @@ var (
 	modulesWarningsAllowedKey    = android.NewOnceKey("ModulesWarningsAllowed")
 	modulesUsingWnoErrorKey      = android.NewOnceKey("ModulesUsingWnoError")
 	modulesMissingProfileFileKey = android.NewOnceKey("ModulesMissingProfileFile")
+	sanitizerVariables           = map[string]string{
+		"ADDRESS_SANITIZER_RUNTIME_LIBRARY":   config.AddressSanitizerRuntimeLibrary(),
+		"HWADDRESS_SANITIZER_RUNTIME_LIBRARY": config.HWAddressSanitizerRuntimeLibrary(),
+		"HWADDRESS_SANITIZER_STATIC_LIBRARY":  config.HWAddressSanitizerStaticLibrary(),
+		"UBSAN_RUNTIME_LIBRARY":               config.UndefinedBehaviorSanitizerRuntimeLibrary(),
+		"UBSAN_MINIMAL_RUNTIME_LIBRARY":       config.UndefinedBehaviorSanitizerMinimalRuntimeLibrary(),
+		"TSAN_RUNTIME_LIBRARY":                config.ThreadSanitizerRuntimeLibrary(),
+		"SCUDO_RUNTIME_LIBRARY":               config.ScudoRuntimeLibrary(),
+		"SCUDO_MINIMAL_RUNTIME_LIBRARY":       config.ScudoMinimalRuntimeLibrary(),
+	}
 )
 
 func init() {
@@ -97,9 +107,6 @@ func makeVarsProvider(ctx android.MakeVarsContext) {
 	ctx.Strict("GLOBAL_CLANG_CPPFLAGS_NO_OVERRIDE", "")
 	ctx.Strict("GLOBAL_CLANG_EXTERNAL_CFLAGS_NO_OVERRIDE", "${config.NoOverrideExternalGlobalCflags}")
 
-	ctx.Strict("BOARD_VNDK_VERSION", ctx.DeviceConfig().VndkVersion())
-	ctx.Strict("RECOVERY_SNAPSHOT_VERSION", ctx.DeviceConfig().RecoverySnapshotVersion())
-
 	// Filter vendor_public_library that are exported to make
 	exportedVendorPublicLibraries := []string{}
 	ctx.VisitAllModules(func(module android.Module) {
@@ -123,12 +130,12 @@ func makeVarsProvider(ctx android.MakeVarsContext) {
 	ctx.Strict("SOONG_MODULES_USING_WNO_ERROR", makeStringOfKeys(ctx, modulesUsingWnoErrorKey))
 	ctx.Strict("SOONG_MODULES_MISSING_PGO_PROFILE_FILE", makeStringOfKeys(ctx, modulesMissingProfileFileKey))
 
- 	ctx.Strict("CLANG_COVERAGE_CONFIG_CFLAGS", strings.Join(clangCoverageCFlags, " "))
- 	ctx.Strict("CLANG_COVERAGE_CONFIG_COMMFLAGS", strings.Join(clangCoverageCommonFlags, " "))
- 	ctx.Strict("CLANG_COVERAGE_HOST_LDFLAGS", strings.Join(clangCoverageHostLdFlags, " "))
- 	ctx.Strict("CLANG_COVERAGE_INSTR_PROFILE", profileInstrFlag)
- 	ctx.Strict("CLANG_COVERAGE_CONTINUOUS_FLAGS", strings.Join(clangContinuousCoverageFlags, " "))
- 	ctx.Strict("CLANG_COVERAGE_HWASAN_FLAGS", strings.Join(clangCoverageHWASanFlags, " "))
+	ctx.Strict("CLANG_COVERAGE_CONFIG_CFLAGS", strings.Join(clangCoverageCFlags, " "))
+	ctx.Strict("CLANG_COVERAGE_CONFIG_COMMFLAGS", strings.Join(clangCoverageCommonFlags, " "))
+	ctx.Strict("CLANG_COVERAGE_HOST_LDFLAGS", strings.Join(clangCoverageHostLdFlags, " "))
+	ctx.Strict("CLANG_COVERAGE_INSTR_PROFILE", profileInstrFlag)
+	ctx.Strict("CLANG_COVERAGE_CONTINUOUS_FLAGS", strings.Join(clangContinuousCoverageFlags, " "))
+	ctx.Strict("CLANG_COVERAGE_HWASAN_FLAGS", strings.Join(clangCoverageHWASanFlags, " "))
 
 	ctx.Strict("ADDRESS_SANITIZER_CONFIG_EXTRA_CFLAGS", strings.Join(asanCflags, " "))
 	ctx.Strict("ADDRESS_SANITIZER_CONFIG_EXTRA_LDFLAGS", strings.Join(asanLdflags, " "))
@@ -184,6 +191,8 @@ func makeVarsProvider(ctx android.MakeVarsContext) {
 	if len(deviceTargets) > 1 {
 		makeVarsToolchain(ctx, "2ND_", deviceTargets[1])
 	}
+
+	makeLlndkVars(ctx)
 }
 
 func makeVarsToolchain(ctx android.MakeVarsContext, secondPrefix string,
@@ -262,43 +271,9 @@ func makeVarsToolchain(ctx android.MakeVarsContext, secondPrefix string,
 	}, " "))
 
 	if target.Os.Class == android.Device {
-		sanitizerVariables := map[string]string{
-			"ADDRESS_SANITIZER_RUNTIME_LIBRARY":   config.AddressSanitizerRuntimeLibrary(toolchain),
-			"HWADDRESS_SANITIZER_RUNTIME_LIBRARY": config.HWAddressSanitizerRuntimeLibrary(toolchain),
-			"HWADDRESS_SANITIZER_STATIC_LIBRARY":  config.HWAddressSanitizerStaticLibrary(toolchain),
-			"UBSAN_RUNTIME_LIBRARY":               config.UndefinedBehaviorSanitizerRuntimeLibrary(toolchain),
-			"UBSAN_MINIMAL_RUNTIME_LIBRARY":       config.UndefinedBehaviorSanitizerMinimalRuntimeLibrary(toolchain),
-			"TSAN_RUNTIME_LIBRARY":                config.ThreadSanitizerRuntimeLibrary(toolchain),
-			"SCUDO_RUNTIME_LIBRARY":               config.ScudoRuntimeLibrary(toolchain),
-			"SCUDO_MINIMAL_RUNTIME_LIBRARY":       config.ScudoMinimalRuntimeLibrary(toolchain),
-		}
-
 		for variable, value := range sanitizerVariables {
 			ctx.Strict(secondPrefix+variable, value)
 		}
-
-		sanitizerLibs := android.SortedStringValues(sanitizerVariables)
-		var sanitizerLibStems []string
-		ctx.VisitAllModules(func(m android.Module) {
-			if !m.Enabled() {
-				return
-			}
-
-			ccModule, _ := m.(*Module)
-			if ccModule == nil || ccModule.library == nil || !ccModule.library.shared() {
-				return
-			}
-
-			if android.InList(strings.TrimPrefix(ctx.ModuleName(m), "prebuilt_"), sanitizerLibs) &&
-				m.Target().Os == target.Os && m.Target().Arch.ArchType == target.Arch.ArchType {
-				outputFile := ccModule.outputFile
-				if outputFile.Valid() {
-					sanitizerLibStems = append(sanitizerLibStems, outputFile.Path().Base())
-				}
-			}
-		})
-		sanitizerLibStems = android.SortedUniqueStrings(sanitizerLibStems)
-		ctx.Strict(secondPrefix+"SANITIZER_STEMS", strings.Join(sanitizerLibStems, " "))
 	}
 
 	// This is used by external/gentoo/...

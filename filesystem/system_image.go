@@ -43,6 +43,9 @@ func systemImageFactory() android.Module {
 }
 
 func (s *systemImage) buildExtraFiles(ctx android.ModuleContext, root android.OutputPath) android.OutputPaths {
+	if s.filesystem.properties.Partition_type != nil {
+		ctx.PropertyErrorf("partition_type", "partition_type must be unset on an android_system_image module. It is assumed to be 'system'.")
+	}
 	lc := s.buildLinkerConfigFile(ctx, root)
 	// Add more files if needed
 	return []android.OutputPath{lc}
@@ -53,19 +56,40 @@ func (s *systemImage) buildLinkerConfigFile(ctx android.ModuleContext, root andr
 	output := root.Join(ctx, "system", "etc", "linker.config.pb")
 
 	// we need "Module"s for packaging items
-	var otherModules []android.Module
+	modulesInPackageByModule := make(map[android.Module]bool)
+	modulesInPackageByName := make(map[string]bool)
+
 	deps := s.gatherFilteredPackagingSpecs(ctx)
 	ctx.WalkDeps(func(child, parent android.Module) bool {
 		for _, ps := range child.PackagingSpecs() {
 			if _, ok := deps[ps.RelPathInPackage()]; ok {
-				otherModules = append(otherModules, child)
+				modulesInPackageByModule[child] = true
+				modulesInPackageByName[child.Name()] = true
+				return true
 			}
 		}
 		return true
 	})
 
+	provideModules := make([]android.Module, 0, len(modulesInPackageByModule))
+	for mod := range modulesInPackageByModule {
+		provideModules = append(provideModules, mod)
+	}
+
+	var requireModules []android.Module
+	ctx.WalkDeps(func(child, parent android.Module) bool {
+		_, parentInPackage := modulesInPackageByModule[parent]
+		_, childInPackageName := modulesInPackageByName[child.Name()]
+
+		// When parent is in the package, and child (or its variant) is not, this can be from an interface.
+		if parentInPackage && !childInPackageName {
+			requireModules = append(requireModules, child)
+		}
+		return true
+	})
+
 	builder := android.NewRuleBuilder(pctx, ctx)
-	linkerconfig.BuildLinkerConfig(ctx, builder, input, otherModules, output)
+	linkerconfig.BuildLinkerConfig(ctx, builder, input, provideModules, requireModules, output)
 	builder.Build("conv_linker_config", "Generate linker config protobuf "+output.String())
 	return output
 }
@@ -74,5 +98,5 @@ func (s *systemImage) buildLinkerConfigFile(ctx android.ModuleContext, root andr
 // Note that "apex" module installs its contents to "apex"(fake partition) as well
 // for symbol lookup by imitating "activated" paths.
 func (s *systemImage) filterPackagingSpec(ps android.PackagingSpec) bool {
-	return ps.Partition() == "system"
+	return s.filesystem.filterInstallablePackagingSpec(ps) && ps.Partition() == "system"
 }

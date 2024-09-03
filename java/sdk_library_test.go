@@ -139,10 +139,10 @@ func TestJavaSdkLibrary(t *testing.T) {
 
 	exportedComponentsInfo, _ := android.SingletonModuleProvider(result, foo.Module(), android.ExportedComponentsInfoProvider)
 	expectedFooExportedComponents := []string{
-		"foo-removed.api.public.latest",
-		"foo-removed.api.system.latest",
-		"foo.api.public.latest",
-		"foo.api.system.latest",
+		"foo-removed.api.combined.public.latest",
+		"foo-removed.api.combined.system.latest",
+		"foo.api.combined.public.latest",
+		"foo.api.combined.system.latest",
 		"foo.stubs",
 		"foo.stubs.exportable",
 		"foo.stubs.exportable.system",
@@ -186,13 +186,13 @@ func TestJavaSdkLibrary(t *testing.T) {
 	// test if quuz have created the api_contribution module
 	result.ModuleForTests(apiScopePublic.stubsSourceModuleName("quuz")+".api.contribution", "")
 
-	fooDexJar := result.ModuleForTests("foo", "android_common").Rule("d8")
-	// tests if kotlinc generated files are NOT excluded from output of foo.
-	android.AssertStringDoesNotContain(t, "foo dex", fooDexJar.BuildParams.Args["mergeZipsFlags"], "-stripFile META-INF/*.kotlin_module")
+	fooImplDexJar := result.ModuleForTests("foo.impl", "android_common").Rule("d8")
+	// tests if kotlinc generated files are NOT excluded from output of foo.impl.
+	android.AssertStringDoesNotContain(t, "foo.impl dex", fooImplDexJar.BuildParams.Args["mergeZipsFlags"], "-stripFile META-INF/*.kotlin_module")
 
-	barDexJar := result.ModuleForTests("bar", "android_common").Rule("d8")
-	// tests if kotlinc generated files are excluded from output of bar.
-	android.AssertStringDoesContain(t, "bar dex", barDexJar.BuildParams.Args["mergeZipsFlags"], "-stripFile META-INF/*.kotlin_module")
+	barImplDexJar := result.ModuleForTests("bar.impl", "android_common").Rule("d8")
+	// tests if kotlinc generated files are excluded from output of bar.impl.
+	android.AssertStringDoesContain(t, "bar.impl dex", barImplDexJar.BuildParams.Args["mergeZipsFlags"], "-stripFile META-INF/*.kotlin_module")
 }
 
 func TestJavaSdkLibrary_UpdatableLibrary(t *testing.T) {
@@ -227,19 +227,21 @@ func TestJavaSdkLibrary_UpdatableLibrary(t *testing.T) {
 `)
 
 	// test that updatability attributes are passed on correctly
-	fooUpdatable := result.ModuleForTests("fooUpdatable.xml", "android_common").Rule("java_sdk_xml")
-	android.AssertStringDoesContain(t, "fooUpdatable.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `on-bootclasspath-since=\"U\"`)
-	android.AssertStringDoesContain(t, "fooUpdatable.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `on-bootclasspath-before=\"V\"`)
-	android.AssertStringDoesContain(t, "fooUpdatable.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `min-device-sdk=\"W\"`)
-	android.AssertStringDoesContain(t, "fooUpdatable.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `max-device-sdk=\"X\"`)
+	fooUpdatable := result.ModuleForTests("fooUpdatable.xml", "android_common").Output("fooUpdatable.xml")
+	fooUpdatableContents := android.ContentFromFileRuleForTests(t, result.TestContext, fooUpdatable)
+	android.AssertStringDoesContain(t, "fooUpdatable.xml contents", fooUpdatableContents, `on-bootclasspath-since="U"`)
+	android.AssertStringDoesContain(t, "fooUpdatable.xml contents", fooUpdatableContents, `on-bootclasspath-before="V"`)
+	android.AssertStringDoesContain(t, "fooUpdatable.xml contents", fooUpdatableContents, `min-device-sdk="W"`)
+	android.AssertStringDoesContain(t, "fooUpdatable.xml contents", fooUpdatableContents, `max-device-sdk="X"`)
 
 	// double check that updatability attributes are not written if they don't exist in the bp file
 	// the permissions file for the foo library defined above
-	fooPermissions := result.ModuleForTests("foo.xml", "android_common").Rule("java_sdk_xml")
-	android.AssertStringDoesNotContain(t, "foo.xml java_sdk_xml command", fooPermissions.RuleParams.Command, `on-bootclasspath-since`)
-	android.AssertStringDoesNotContain(t, "foo.xml java_sdk_xml command", fooPermissions.RuleParams.Command, `on-bootclasspath-before`)
-	android.AssertStringDoesNotContain(t, "foo.xml java_sdk_xml command", fooPermissions.RuleParams.Command, `min-device-sdk`)
-	android.AssertStringDoesNotContain(t, "foo.xml java_sdk_xml command", fooPermissions.RuleParams.Command, `max-device-sdk`)
+	fooPermissions := result.ModuleForTests("foo.xml", "android_common").Output("foo.xml")
+	fooPermissionsContents := android.ContentFromFileRuleForTests(t, result.TestContext, fooPermissions)
+	android.AssertStringDoesNotContain(t, "foo.xml contents", fooPermissionsContents, `on-bootclasspath-since`)
+	android.AssertStringDoesNotContain(t, "foo.xml contents", fooPermissionsContents, `on-bootclasspath-before`)
+	android.AssertStringDoesNotContain(t, "foo.xml contents", fooPermissionsContents, `min-device-sdk`)
+	android.AssertStringDoesNotContain(t, "foo.xml contents", fooPermissionsContents, `max-device-sdk`)
 }
 
 func TestJavaSdkLibrary_UpdatableLibrary_Validation_ValidVersion(t *testing.T) {
@@ -370,9 +372,10 @@ func TestJavaSdkLibrary_UpdatableLibrary_usesNewTag(t *testing.T) {
 		}
 `)
 	// test that updatability attributes are passed on correctly
-	fooUpdatable := result.ModuleForTests("foo.xml", "android_common").Rule("java_sdk_xml")
-	android.AssertStringDoesContain(t, "foo.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `<apex-library`)
-	android.AssertStringDoesNotContain(t, "foo.xml java_sdk_xml command", fooUpdatable.RuleParams.Command, `<library`)
+	fooUpdatable := result.ModuleForTests("foo.xml", "android_common").Output("foo.xml")
+	fooUpdatableContents := android.ContentFromFileRuleForTests(t, result.TestContext, fooUpdatable)
+	android.AssertStringDoesContain(t, "foo.xml contents", fooUpdatableContents, `<apex-library`)
+	android.AssertStringDoesNotContain(t, "foo.xml contents", fooUpdatableContents, `<library`)
 }
 
 func TestJavaSdkLibrary_StubOrImplOnlyLibs(t *testing.T) {
@@ -489,7 +492,7 @@ func TestJavaSdkLibrary_AccessOutputFiles_NoAnnotations(t *testing.T) {
 		PrepareForTestWithJavaSdkLibraryFiles,
 		FixtureWithLastReleaseApis("foo"),
 	).
-		ExtendWithErrorHandler(android.FixtureExpectsAtLeastOneErrorMatchingPattern(`module "bar" variant "android_common": path dependency ":foo{.public.annotations.zip}": annotations.zip not available for api scope public`)).
+		ExtendWithErrorHandler(android.FixtureExpectsAtLeastOneErrorMatchingPattern(`module "bar" variant "android_common": failed to get output file from module "foo" at tag ".public.annotations.zip": annotations.zip not available for api scope public`)).
 		RunTestWithBp(t, `
 		java_sdk_library {
 			name: "foo",
@@ -556,8 +559,8 @@ func TestJavaSdkLibrary_Deps(t *testing.T) {
 
 	CheckModuleDependencies(t, result.TestContext, "sdklib", "android_common", []string{
 		`dex2oatd`,
-		`sdklib-removed.api.public.latest`,
-		`sdklib.api.public.latest`,
+		`sdklib-removed.api.combined.public.latest`,
+		`sdklib.api.combined.public.latest`,
 		`sdklib.impl`,
 		`sdklib.stubs`,
 		`sdklib.stubs.exportable`,
@@ -920,6 +923,7 @@ func TestJavaSdkLibraryImport(t *testing.T) {
 	}
 
 	CheckModuleDependencies(t, result.TestContext, "sdklib", "android_common", []string{
+		`all_apex_contributions`,
 		`dex2oatd`,
 		`prebuilt_sdklib.stubs`,
 		`prebuilt_sdklib.stubs.source.test`,
@@ -960,8 +964,8 @@ func TestJavaSdkLibraryImport_WithSource(t *testing.T) {
 	CheckModuleDependencies(t, result.TestContext, "sdklib", "android_common", []string{
 		`dex2oatd`,
 		`prebuilt_sdklib`,
-		`sdklib-removed.api.public.latest`,
-		`sdklib.api.public.latest`,
+		`sdklib-removed.api.combined.public.latest`,
+		`sdklib.api.combined.public.latest`,
 		`sdklib.impl`,
 		`sdklib.stubs`,
 		`sdklib.stubs.exportable`,
@@ -1039,8 +1043,8 @@ func testJavaSdkLibraryImport_Preferred(t *testing.T, prefer string, preparer an
 
 	CheckModuleDependencies(t, result.TestContext, "sdklib", "android_common", []string{
 		`prebuilt_sdklib`,
-		`sdklib-removed.api.public.latest`,
-		`sdklib.api.public.latest`,
+		`sdklib-removed.api.combined.public.latest`,
+		`sdklib.api.combined.public.latest`,
 		`sdklib.impl`,
 		`sdklib.stubs`,
 		`sdklib.stubs.exportable`,
@@ -1081,18 +1085,6 @@ func testJavaSdkLibraryImport_Preferred(t *testing.T, prefer string, preparer an
 func TestJavaSdkLibraryImport_Preferred(t *testing.T) {
 	t.Run("prefer", func(t *testing.T) {
 		testJavaSdkLibraryImport_Preferred(t, "prefer: true,", android.NullFixturePreparer)
-	})
-
-	t.Run("use_source_config_var", func(t *testing.T) {
-		testJavaSdkLibraryImport_Preferred(t,
-			"use_source_config_var: {config_namespace: \"acme\", var_name: \"use_source\"},",
-			android.FixtureModifyProductVariables(func(variables android.FixtureProductVariables) {
-				variables.VendorVars = map[string]map[string]string{
-					"acme": {
-						"use_source": "false",
-					},
-				}
-			}))
 	})
 }
 
@@ -1239,7 +1231,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType                string
 		fromPartition              string
 		toPartition                string
-		enforceVendorInterface     bool
 		enforceProductInterface    bool
 		enforceJavaSdkLibraryCheck bool
 		allowList                  []string
@@ -1274,9 +1265,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 			android.FixtureWithRootAndroidBp(bpFile),
 			android.FixtureModifyProductVariables(func(variables android.FixtureProductVariables) {
 				variables.EnforceProductPartitionInterface = proptools.BoolPtr(info.enforceProductInterface)
-				if info.enforceVendorInterface {
-					variables.DeviceVndkVersion = proptools.StringPtr("current")
-				}
 				variables.EnforceInterPartitionJavaSdkLibrary = proptools.BoolPtr(info.enforceJavaSdkLibraryCheck)
 				variables.InterPartitionJavaLibraryAllowList = info.allowList
 			}),
@@ -1304,7 +1292,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "product",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: false,
 	}, "")
@@ -1313,7 +1300,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "product",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    false,
 		enforceJavaSdkLibraryCheck: true,
 	}, "")
@@ -1322,7 +1308,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "product",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, errorMessage)
@@ -1331,7 +1316,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "vendor",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, errorMessage)
@@ -1340,7 +1324,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "vendor",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 		allowList:                  []string{"bar"},
@@ -1350,7 +1333,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_library",
 		fromPartition:              "vendor",
 		toPartition:                "product",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, errorMessage)
@@ -1359,7 +1341,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_sdk_library",
 		fromPartition:              "product",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, "")
@@ -1368,7 +1349,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_sdk_library",
 		fromPartition:              "vendor",
 		toPartition:                "system",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, "")
@@ -1377,7 +1357,6 @@ func TestJavaSdkLibraryEnforce(t *testing.T) {
 		libraryType:                "java_sdk_library",
 		fromPartition:              "vendor",
 		toPartition:                "product",
-		enforceVendorInterface:     true,
 		enforceProductInterface:    true,
 		enforceJavaSdkLibraryCheck: true,
 	}, "")
@@ -1393,6 +1372,11 @@ func TestJavaSdkLibraryDist(t *testing.T) {
 			"sdklib_group_foo",
 			"sdklib_owner_foo",
 			"foo"),
+		android.FixtureModifyProductVariables(func(variables android.FixtureProductVariables) {
+			variables.BuildFlags = map[string]string{
+				"RELEASE_HIDDEN_API_EXPORTABLE_STUBS": "true",
+			}
+		}),
 	).RunTestWithBp(t, `
 		java_sdk_library {
 			name: "sdklib_no_group",
@@ -1474,11 +1458,11 @@ func TestSdkLibrary_CheckMinSdkVersion(t *testing.T) {
 	preparer.RunTestWithBp(t, `
 		java_sdk_library {
 			name: "sdklib",
-            srcs: ["a.java"],
-            static_libs: ["util"],
-            min_sdk_version: "30",
+			srcs: ["a.java"],
+			static_libs: ["util"],
+			min_sdk_version: "30",
 			unsafe_ignore_missing_latest_api: true,
-        }
+		}
 
 		java_library {
 			name: "util",
@@ -1715,9 +1699,9 @@ func TestSdkLibraryDependency(t *testing.T) {
 		}
 `)
 
-	barPermissions := result.ModuleForTests("bar.xml", "android_common").Rule("java_sdk_xml")
-
-	android.AssertStringDoesContain(t, "bar.xml java_sdk_xml command", barPermissions.RuleParams.Command, `dependency=\"foo\"`)
+	barPermissions := result.ModuleForTests("bar.xml", "android_common").Output("bar.xml")
+	barContents := android.ContentFromFileRuleForTests(t, result.TestContext, barPermissions)
+	android.AssertStringDoesContain(t, "bar.xml java_sdk_xml command", barContents, `dependency="foo"`)
 }
 
 func TestSdkLibraryExportableStubsLibrary(t *testing.T) {
@@ -1732,6 +1716,7 @@ func TestSdkLibraryExportableStubsLibrary(t *testing.T) {
 		aconfig_declarations {
 			name: "bar",
 			package: "com.example.package",
+			container: "com.android.foo",
 			srcs: [
 				"bar.aconfig",
 			],

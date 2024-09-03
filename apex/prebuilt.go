@@ -121,6 +121,11 @@ type PrebuiltCommonProperties struct {
 	// List of systemserverclasspath fragments inside this prebuilt APEX bundle and for which this
 	// APEX bundle will create an APEX variant.
 	Exported_systemserverclasspath_fragments []string
+
+	// Path to the .prebuilt_info file of the prebuilt apex.
+	// In case of mainline modules, the .prebuilt_info file contains the build_id that was used to
+	// generate the prebuilt.
+	Prebuilt_info *string `android:"path"`
 }
 
 // initPrebuiltCommon initializes the prebuiltCommon structure and performs initialization of the
@@ -192,6 +197,7 @@ func (p *prebuiltCommon) initApexFilesForAndroidMk(ctx android.ModuleContext) {
 	// If this apex contains a system server jar, then the dexpreopt artifacts should be added as required
 	for _, install := range p.Dexpreopter.DexpreoptBuiltInstalledForApex() {
 		p.requiredModuleNames = append(p.requiredModuleNames, install.FullModuleName())
+		install.PackageFile(ctx)
 	}
 }
 
@@ -240,7 +246,6 @@ func (p *prebuiltCommon) AndroidMkEntries() []android.AndroidMkEntries {
 			OutputFile:    android.OptionalPathForPath(p.outputApex),
 			Include:       "$(BUILD_PREBUILT)",
 			Host_required: p.hostRequired,
-			OverrideName:  p.BaseModuleName(),
 			ExtraEntries: []android.AndroidMkExtraEntriesFunc{
 				func(ctx android.AndroidMkExtraEntriesContext, entries *android.AndroidMkEntries) {
 					entries.SetString("LOCAL_MODULE_PATH", p.installDir.String())
@@ -498,9 +503,6 @@ type Prebuilt struct {
 	inputApex android.Path
 
 	provenanceMetaDataFile android.OutputPath
-
-	// Single aconfig "cache file" merged from this module and all dependencies.
-	mergedAconfigFiles map[string]android.Paths
 }
 
 type ApexFileProperties struct {
@@ -819,7 +821,37 @@ func (p *prebuiltCommon) provideApexExportsInfo(ctx android.ModuleContext) {
 	}
 }
 
+// Set prebuiltInfoProvider. This will be used by `apex_prebuiltinfo_singleton` to print out a metadata file
+// with information about whether source or prebuilt of an apex was used during the build.
+func (p *prebuiltCommon) providePrebuiltInfo(ctx android.ModuleContext) {
+	info := android.PrebuiltInfo{
+		Name:        p.BaseModuleName(),
+		Is_prebuilt: true,
+	}
+	// If Prebuilt_info information is available in the soong module definition, add it to prebuilt_info.json.
+	if p.prebuiltCommonProperties.Prebuilt_info != nil {
+		info.Prebuilt_info_file_path = android.PathForModuleSrc(ctx, *p.prebuiltCommonProperties.Prebuilt_info).String()
+	}
+	android.SetProvider(ctx, android.PrebuiltInfoProvider, info)
+}
+
+// Uses an object provided by its deps to validate that the contents of bcpf have been added to the global
+// PRODUCT_APEX_BOOT_JARS
+// This validation will only run on the apex which is active for this product/release_config
+func validateApexClasspathFragments(ctx android.ModuleContext) {
+	ctx.VisitDirectDeps(func(m android.Module) {
+		if info, exists := android.OtherModuleProvider(ctx, m, java.ClasspathFragmentValidationInfoProvider); exists {
+			ctx.ModuleErrorf("%s in contents of %s must also be declared in PRODUCT_APEX_BOOT_JARS", info.UnknownJars, info.ClasspathFragmentModuleName)
+		}
+	})
+}
+
 func (p *Prebuilt) GenerateAndroidBuildActions(ctx android.ModuleContext) {
+	// Validate contents of classpath fragments
+	if !p.IsHideFromMake() {
+		validateApexClasspathFragments(ctx)
+	}
+
 	p.apexKeysPath = writeApexKeys(ctx, p)
 	// TODO(jungjw): Check the key validity.
 	p.inputApex = android.OptionalPathForModuleSrc(ctx, p.prebuiltCommonProperties.Selected_apex).Path()
@@ -846,6 +878,8 @@ func (p *Prebuilt) GenerateAndroidBuildActions(ctx android.ModuleContext) {
 	// provide info used for generating the boot image
 	p.provideApexExportsInfo(ctx)
 
+	p.providePrebuiltInfo(ctx)
+
 	// Save the files that need to be made available to Make.
 	p.initApexFilesForAndroidMk(ctx)
 
@@ -860,8 +894,6 @@ func (p *Prebuilt) GenerateAndroidBuildActions(ctx android.ModuleContext) {
 		p.installedFile = ctx.InstallFile(p.installDir, p.installFilename, p.inputApex, p.compatSymlinks...)
 		p.provenanceMetaDataFile = provenance.GenerateArtifactProvenanceMetaData(ctx, p.inputApex, p.installedFile)
 	}
-
-	android.CollectDependencyAconfigFiles(ctx, &p.mergedAconfigFiles)
 }
 
 func (p *Prebuilt) ProvenanceMetaDataFile() android.OutputPath {
@@ -1043,6 +1075,11 @@ func (a *ApexSet) ApexInfoMutator(mctx android.TopDownMutatorContext) {
 }
 
 func (a *ApexSet) GenerateAndroidBuildActions(ctx android.ModuleContext) {
+	// Validate contents of classpath fragments
+	if !a.IsHideFromMake() {
+		validateApexClasspathFragments(ctx)
+	}
+
 	a.apexKeysPath = writeApexKeys(ctx, a)
 	a.installFilename = a.InstallFilename()
 	if !strings.HasSuffix(a.installFilename, imageApexSuffix) && !strings.HasSuffix(a.installFilename, imageCapexSuffix) {
@@ -1067,6 +1104,8 @@ func (a *ApexSet) GenerateAndroidBuildActions(ctx android.ModuleContext) {
 
 	// provide info used for generating the boot image
 	a.provideApexExportsInfo(ctx)
+
+	a.providePrebuiltInfo(ctx)
 
 	// Save the files that need to be made available to Make.
 	a.initApexFilesForAndroidMk(ctx)

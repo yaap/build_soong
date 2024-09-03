@@ -23,24 +23,29 @@ import (
 
 var (
 	riscv64Cflags = []string{
-		// Help catch common 32/64-bit errors.
+		// Help catch common 32/64-bit errors. (This is duplicated in all 64-bit
+		// architectures' cflags.)
 		"-Werror=implicit-function-declaration",
+		// This is already the driver's Android default, but duplicated here (and
+		// below) for ease of experimentation with additional extensions.
 		"-march=rv64gcv_zba_zbb_zbs",
-		"-munaligned-access",
-		// Until https://gitlab.com/qemu-project/qemu/-/issues/1976 is fixed...
+		// TODO: move to driver (https://github.com/google/android-riscv64/issues/111)
+		"-mno-strict-align",
+		// TODO: remove when qemu V works (https://gitlab.com/qemu-project/qemu/-/issues/1976)
+		// (Note that we'll probably want to wait for berberis to be good enough
+		// that most people don't care about qemu's V performance either!)
 		"-mno-implicit-float",
-		// (https://github.com/google/android-riscv64/issues/124)
+		// TODO: remove when clang default changed (https://github.com/google/android-riscv64/issues/124)
 		"-mllvm -jump-is-expensive=false",
 	}
 
 	riscv64ArchVariantCflags = map[string][]string{}
 
 	riscv64Ldflags = []string{
-		"-Wl,--hash-style=gnu",
+		// This is already the driver's Android default, but duplicated here (and
+		// above) for ease of experimentation with additional extensions.
 		"-march=rv64gcv_zba_zbb_zbs",
-		"-munaligned-access",
-		// We should change the default for this in clang, but for now...
-		// (https://github.com/google/android-riscv64/issues/124)
+		// TODO: remove when clang default changed (https://github.com/google/android-riscv64/issues/124)
 		"-Wl,-mllvm -Wl,-jump-is-expensive=false",
 	}
 
@@ -57,15 +62,11 @@ const ()
 
 func init() {
 
-	exportedVars.ExportStringListStaticVariable("Riscv64Ldflags", riscv64Ldflags)
-	exportedVars.ExportStringListStaticVariable("Riscv64Lldflags", riscv64Lldflags)
+	pctx.StaticVariable("Riscv64Ldflags", strings.Join(riscv64Ldflags, " "))
+	pctx.StaticVariable("Riscv64Lldflags", strings.Join(riscv64Lldflags, " "))
 
-	exportedVars.ExportStringListStaticVariable("Riscv64Cflags", riscv64Cflags)
-	exportedVars.ExportStringListStaticVariable("Riscv64Cppflags", riscv64Cppflags)
-
-	exportedVars.ExportVariableReferenceDict("Riscv64ArchVariantCflags", riscv64ArchVariantCflagsVar)
-	exportedVars.ExportVariableReferenceDict("Riscv64CpuVariantCflags", riscv64CpuVariantCflagsVar)
-	exportedVars.ExportVariableReferenceDict("Riscv64CpuVariantLdflags", riscv64CpuVariantLdflags)
+	pctx.StaticVariable("Riscv64Cflags", strings.Join(riscv64Cflags, " "))
+	pctx.StaticVariable("Riscv64Cppflags", strings.Join(riscv64Cppflags, " "))
 }
 
 var (

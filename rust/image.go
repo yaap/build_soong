@@ -197,29 +197,20 @@ func (mod *Module) InVendorOrProduct() bool {
 	return mod.InVendor() || mod.InProduct()
 }
 
-func (mod *Module) SetImageVariation(ctx android.BaseModuleContext, variant string, module android.Module) {
-	m := module.(*Module)
+func (mod *Module) SetImageVariation(ctx android.BaseModuleContext, variant string) {
 	if variant == android.VendorRamdiskVariation {
-		m.MakeAsPlatform()
+		mod.MakeAsPlatform()
 	} else if variant == android.RecoveryVariation {
-		m.MakeAsPlatform()
+		mod.MakeAsPlatform()
 	} else if strings.HasPrefix(variant, cc.VendorVariation) {
-		m.Properties.ImageVariation = cc.VendorVariation
+		mod.Properties.ImageVariation = cc.VendorVariation
 		if strings.HasPrefix(variant, cc.VendorVariationPrefix) {
-			m.Properties.VndkVersion = strings.TrimPrefix(variant, cc.VendorVariationPrefix)
-		}
-
-		// Makefile shouldn't know vendor modules other than BOARD_VNDK_VERSION.
-		// Hide other vendor variants to avoid collision.
-		vndkVersion := ctx.DeviceConfig().VndkVersion()
-		if vndkVersion != "current" && vndkVersion != "" && vndkVersion != m.Properties.VndkVersion {
-			m.Properties.HideFromMake = true
-			m.HideFromMake()
+			mod.Properties.VndkVersion = strings.TrimPrefix(variant, cc.VendorVariationPrefix)
 		}
 	} else if strings.HasPrefix(variant, cc.ProductVariation) {
-		m.Properties.ImageVariation = cc.ProductVariation
+		mod.Properties.ImageVariation = cc.ProductVariation
 		if strings.HasPrefix(variant, cc.ProductVariationPrefix) {
-			m.Properties.VndkVersion = strings.TrimPrefix(variant, cc.ProductVariationPrefix)
+			mod.Properties.VndkVersion = strings.TrimPrefix(variant, cc.ProductVariationPrefix)
 		}
 	}
 }

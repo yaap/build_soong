@@ -17,7 +17,6 @@ package java
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"android/soong/android"
 
@@ -92,11 +91,7 @@ func (library *Library) AndroidMkEntries() []android.AndroidMkEntries {
 			ExtraEntries: []android.AndroidMkExtraEntriesFunc{
 				func(ctx android.AndroidMkExtraEntriesContext, entries *android.AndroidMkEntries) {
 					if len(library.logtagsSrcs) > 0 {
-						var logtags []string
-						for _, l := range library.logtagsSrcs {
-							logtags = append(logtags, l.Rel())
-						}
-						entries.AddStrings("LOCAL_LOGTAGS_FILES", logtags...)
+						entries.AddStrings("LOCAL_SOONG_LOGTAGS_FILES", library.logtagsSrcs.Strings()...)
 					}
 
 					if library.installFile == nil {
@@ -128,7 +123,6 @@ func (library *Library) AndroidMkEntries() []android.AndroidMkEntries {
 					if library.dexpreopter.configPath != nil {
 						entries.SetPath("LOCAL_SOONG_DEXPREOPT_CONFIG", library.dexpreopter.configPath)
 					}
-					android.SetAconfigFileMkEntries(&library.ModuleBase, entries, library.mergedAconfigFiles)
 				},
 			},
 		})
@@ -211,7 +205,7 @@ func (prebuilt *Import) AndroidMkEntries() []android.AndroidMkEntries {
 	return []android.AndroidMkEntries{android.AndroidMkEntries{
 		Class:        "JAVA_LIBRARIES",
 		OverrideName: prebuilt.BaseModuleName(),
-		OutputFile:   android.OptionalPathForPath(prebuilt.combinedClasspathFile),
+		OutputFile:   android.OptionalPathForPath(prebuilt.combinedImplementationFile),
 		Include:      "$(BUILD_SYSTEM)/soong_java_prebuilt.mk",
 		ExtraEntries: []android.AndroidMkExtraEntriesFunc{
 			func(ctx android.AndroidMkExtraEntriesContext, entries *android.AndroidMkEntries) {
@@ -219,8 +213,8 @@ func (prebuilt *Import) AndroidMkEntries() []android.AndroidMkEntries {
 				if prebuilt.dexJarFile.IsSet() {
 					entries.SetPath("LOCAL_SOONG_DEX_JAR", prebuilt.dexJarFile.Path())
 				}
-				entries.SetPath("LOCAL_SOONG_HEADER_JAR", prebuilt.combinedClasspathFile)
-				entries.SetPath("LOCAL_SOONG_CLASSES_JAR", prebuilt.combinedClasspathFile)
+				entries.SetPath("LOCAL_SOONG_HEADER_JAR", prebuilt.combinedHeaderFile)
+				entries.SetPath("LOCAL_SOONG_CLASSES_JAR", prebuilt.combinedImplementationFile)
 				entries.SetString("LOCAL_SDK_VERSION", prebuilt.sdkVersion.String())
 				entries.SetString("LOCAL_MODULE_STEM", prebuilt.Stem())
 				// TODO(b/289117800): LOCAL_ACONFIG_FILES for prebuilts
@@ -262,13 +256,13 @@ func (prebuilt *AARImport) AndroidMkEntries() []android.AndroidMkEntries {
 	}
 	return []android.AndroidMkEntries{android.AndroidMkEntries{
 		Class:      "JAVA_LIBRARIES",
-		OutputFile: android.OptionalPathForPath(prebuilt.classpathFile),
+		OutputFile: android.OptionalPathForPath(prebuilt.implementationJarFile),
 		Include:    "$(BUILD_SYSTEM)/soong_java_prebuilt.mk",
 		ExtraEntries: []android.AndroidMkExtraEntriesFunc{
 			func(ctx android.AndroidMkExtraEntriesContext, entries *android.AndroidMkEntries) {
 				entries.SetBool("LOCAL_UNINSTALLABLE_MODULE", true)
-				entries.SetPath("LOCAL_SOONG_HEADER_JAR", prebuilt.classpathFile)
-				entries.SetPath("LOCAL_SOONG_CLASSES_JAR", prebuilt.classpathFile)
+				entries.SetPath("LOCAL_SOONG_HEADER_JAR", prebuilt.headerJarFile)
+				entries.SetPath("LOCAL_SOONG_CLASSES_JAR", prebuilt.implementationJarFile)
 				entries.SetPath("LOCAL_SOONG_RESOURCE_EXPORT_PACKAGE", prebuilt.exportPackage)
 				entries.SetPath("LOCAL_SOONG_TRANSITIVE_RES_PACKAGES", prebuilt.transitiveAaptResourcePackagesFile)
 				entries.SetPath("LOCAL_SOONG_EXPORT_PROGUARD_FLAGS", prebuilt.proguardFlags)
@@ -302,7 +296,6 @@ func (binary *Binary) AndroidMkEntries() []android.AndroidMkEntries {
 					if len(binary.dexpreopter.builtInstalled) > 0 {
 						entries.SetString("LOCAL_SOONG_BUILT_INSTALLED", binary.dexpreopter.builtInstalled)
 					}
-					android.SetAconfigFileMkEntries(&binary.ModuleBase, entries, binary.mergedAconfigFiles)
 				},
 			},
 			ExtraFooters: []android.AndroidMkExtraFootersFunc{
@@ -420,22 +413,11 @@ func (app *AndroidApp) AndroidMkEntries() []android.AndroidMkEntries {
 					jniSymbols := app.JNISymbolsInstalls(app.installPathForJNISymbols.String())
 					entries.SetString("LOCAL_SOONG_JNI_LIBS_SYMBOLS", jniSymbols.String())
 				} else {
+					var names []string
 					for _, jniLib := range app.jniLibs {
-						entries.AddStrings("LOCAL_SOONG_JNI_LIBS_"+jniLib.target.Arch.ArchType.String(), jniLib.name)
-						var partitionTag string
-
-						// Mimic the creation of partition_tag in build/make,
-						// which defaults to an empty string when the partition is system.
-						// Otherwise, capitalize with a leading _
-						if jniLib.partition == "system" {
-							partitionTag = ""
-						} else {
-							split := strings.Split(jniLib.partition, "/")
-							partitionTag = "_" + strings.ToUpper(split[len(split)-1])
-						}
-						entries.AddStrings("LOCAL_SOONG_JNI_LIBS_PARTITION_"+jniLib.target.Arch.ArchType.String(),
-							jniLib.name+":"+partitionTag)
+						names = append(names, jniLib.name)
 					}
+					entries.AddStrings("LOCAL_REQUIRED_MODULES", names...)
 				}
 
 				if len(app.jniCoverageOutputs) > 0 {
@@ -454,9 +436,7 @@ func (app *AndroidApp) AndroidMkEntries() []android.AndroidMkEntries {
 
 				entries.SetOptionalPaths("LOCAL_SOONG_LINT_REPORTS", app.linter.reports)
 
-				if app.Name() != "framework-res" {
-					android.SetAconfigFileMkEntries(&app.ModuleBase, entries, app.mergedAconfigFiles)
-				}
+				entries.AddStrings("LOCAL_SOONG_LOGTAGS_FILES", app.logtagsSrcs.Strings()...)
 			},
 		},
 		ExtraFooters: []android.AndroidMkExtraFootersFunc{
@@ -533,7 +513,6 @@ func (a *AndroidLibrary) AndroidMkEntries() []android.AndroidMkEntries {
 		entries.SetPath("LOCAL_FULL_MANIFEST_FILE", a.mergedManifestFile)
 		entries.SetPath("LOCAL_SOONG_EXPORT_PROGUARD_FLAGS", a.combinedExportedProguardFlagsFile)
 		entries.SetBoolIfTrue("LOCAL_UNINSTALLABLE_MODULE", true)
-		android.SetAconfigFileMkEntries(&a.ModuleBase, entries, a.mergedAconfigFiles)
 	})
 
 	return entriesList

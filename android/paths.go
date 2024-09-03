@@ -60,6 +60,7 @@ type EarlyModulePathContext interface {
 
 	ModuleDir() string
 	ModuleErrorf(fmt string, args ...interface{})
+	OtherModulePropertyErrorf(module Module, property, fmt string, args ...interface{})
 }
 
 var _ EarlyModulePathContext = ModuleContext(nil)
@@ -277,6 +278,7 @@ type WritablePath interface {
 
 type genPathProvider interface {
 	genPathWithExt(ctx ModuleOutPathContext, subdir, ext string) ModuleGenPath
+	genPathWithExtAndTrimExt(ctx ModuleOutPathContext, subdir, ext string, trimExt string) ModuleGenPath
 }
 type objPathProvider interface {
 	objPathWithExt(ctx ModuleOutPathContext, subdir, ext string) ModuleObjPath
@@ -290,6 +292,16 @@ type resPathProvider interface {
 func GenPathWithExt(ctx ModuleOutPathContext, subdir string, p Path, ext string) ModuleGenPath {
 	if path, ok := p.(genPathProvider); ok {
 		return path.genPathWithExt(ctx, subdir, ext)
+	}
+	ReportPathErrorf(ctx, "Tried to create generated file from unsupported path: %s(%s)", reflect.TypeOf(p).Name(), p)
+	return PathForModuleGen(ctx)
+}
+
+// GenPathWithExtAndTrimExt derives a new file path in ctx's generated sources directory
+// from the current path, but with the new extension and trim the suffix.
+func GenPathWithExtAndTrimExt(ctx ModuleOutPathContext, subdir string, p Path, ext string, trimExt string) ModuleGenPath {
+	if path, ok := p.(genPathProvider); ok {
+		return path.genPathWithExtAndTrimExt(ctx, subdir, ext, trimExt)
 	}
 	ReportPathErrorf(ctx, "Tried to create generated file from unsupported path: %s(%s)", reflect.TypeOf(p).Name(), p)
 	return PathForModuleGen(ctx)
@@ -550,24 +562,18 @@ func getPathsFromModuleDep(ctx ModuleWithDepsPathContext, path, moduleName, tag 
 	if module == nil {
 		return nil, missingDependencyError{[]string{moduleName}}
 	}
-	if aModule, ok := module.(Module); ok && !aModule.Enabled() {
+	if aModule, ok := module.(Module); ok && !aModule.Enabled(ctx) {
 		return nil, missingDependencyError{[]string{moduleName}}
 	}
-	if outProducer, ok := module.(OutputFileProducer); ok {
-		outputFiles, err := outProducer.OutputFiles(tag)
-		if err != nil {
-			return nil, fmt.Errorf("path dependency %q: %s", path, err)
-		}
-		return outputFiles, nil
-	} else if tag != "" {
-		return nil, fmt.Errorf("path dependency %q is not an output file producing module", path)
-	} else if goBinary, ok := module.(bootstrap.GoBinaryTool); ok {
+	if goBinary, ok := module.(bootstrap.GoBinaryTool); ok && tag == "" {
 		goBinaryPath := PathForGoBinary(ctx, goBinary)
 		return Paths{goBinaryPath}, nil
-	} else if srcProducer, ok := module.(SourceFileProducer); ok {
-		return srcProducer.Srcs(), nil
+	}
+	outputFiles, err := outputFilesForModule(ctx, module, tag)
+	if outputFiles != nil && err == nil {
+		return outputFiles, nil
 	} else {
-		return nil, fmt.Errorf("path dependency %q is not a source file producing module", path)
+		return nil, err
 	}
 }
 
@@ -673,7 +679,8 @@ func PathsAndMissingDepsRelativeToModuleSourceDir(input SourceInput) (Paths, []s
 		expandedSrcFiles = append(expandedSrcFiles, srcFiles...)
 	}
 
-	return expandedSrcFiles, append(missingDeps, missingExcludeDeps...)
+	// TODO: b/334169722 - Replace with an error instead of implicitly removing duplicates.
+	return FirstUniquePaths(expandedSrcFiles), append(missingDeps, missingExcludeDeps...)
 }
 
 type missingDependencyError struct {
@@ -1556,6 +1563,17 @@ func (p SourcePath) genPathWithExt(ctx ModuleOutPathContext, subdir, ext string)
 	return PathForModuleGen(ctx, subdir, pathtools.ReplaceExtension(p.path, ext))
 }
 
+func (p SourcePath) genPathWithExtAndTrimExt(ctx ModuleOutPathContext, subdir, ext string, trimExt string) ModuleGenPath {
+	// If Trim_extension being set, force append Output_extension without replace original extension.
+	if trimExt != "" {
+		if ext != "" {
+			return PathForModuleGen(ctx, subdir, strings.TrimSuffix(p.path, trimExt)+"."+ext)
+		}
+		return PathForModuleGen(ctx, subdir, strings.TrimSuffix(p.path, trimExt))
+	}
+	return PathForModuleGen(ctx, subdir, pathtools.ReplaceExtension(p.path, ext))
+}
+
 func (p SourcePath) objPathWithExt(ctx ModuleOutPathContext, subdir, ext string) ModuleObjPath {
 	return PathForModuleObj(ctx, subdir, pathtools.ReplaceExtension(p.path, ext))
 }
@@ -1640,6 +1658,17 @@ func PathForModuleGen(ctx ModuleOutPathContext, paths ...string) ModuleGenPath {
 
 func (p ModuleGenPath) genPathWithExt(ctx ModuleOutPathContext, subdir, ext string) ModuleGenPath {
 	// TODO: make a different path for local vs remote generated files?
+	return PathForModuleGen(ctx, subdir, pathtools.ReplaceExtension(p.path, ext))
+}
+
+func (p ModuleGenPath) genPathWithExtAndTrimExt(ctx ModuleOutPathContext, subdir, ext string, trimExt string) ModuleGenPath {
+	// If Trim_extension being set, force append Output_extension without replace original extension.
+	if trimExt != "" {
+		if ext != "" {
+			return PathForModuleGen(ctx, subdir, strings.TrimSuffix(p.path, trimExt)+"."+ext)
+		}
+		return PathForModuleGen(ctx, subdir, strings.TrimSuffix(p.path, trimExt))
+	}
 	return PathForModuleGen(ctx, subdir, pathtools.ReplaceExtension(p.path, ext))
 }
 
@@ -1881,17 +1910,13 @@ func pathForInstall(ctx PathContext, os OsType, arch ArchType, partition string,
 	return base.Join(ctx, pathComponents...)
 }
 
-func pathForNdkOrSdkInstall(ctx PathContext, prefix string, paths []string) InstallPath {
-	base := pathForPartitionInstallDir(ctx, "", prefix, false)
-	return base.Join(ctx, paths...)
-}
-
-func PathForNdkInstall(ctx PathContext, paths ...string) InstallPath {
-	return pathForNdkOrSdkInstall(ctx, "ndk", paths)
+func PathForNdkInstall(ctx PathContext, paths ...string) OutputPath {
+	return PathForOutput(ctx, append([]string{"ndk"}, paths...)...)
 }
 
 func PathForMainlineSdksInstall(ctx PathContext, paths ...string) InstallPath {
-	return pathForNdkOrSdkInstall(ctx, "mainline-sdks", paths)
+	base := pathForPartitionInstallDir(ctx, "", "mainline-sdks", false)
+	return base.Join(ctx, paths...)
 }
 
 func InstallPathToOnDevicePath(ctx PathContext, path InstallPath) string {

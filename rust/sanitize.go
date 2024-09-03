@@ -258,7 +258,7 @@ func (sanitize *sanitize) deps(ctx BaseModuleContext, deps Deps) Deps {
 
 func rustSanitizerRuntimeMutator(mctx android.BottomUpMutatorContext) {
 	if mod, ok := mctx.Module().(*Module); ok && mod.sanitize != nil {
-		if !mod.Enabled() {
+		if !mod.Enabled(mctx) {
 			return
 		}
 
@@ -266,12 +266,6 @@ func rustSanitizerRuntimeMutator(mctx android.BottomUpMutatorContext) {
 			noteDep := "note_memtag_heap_async"
 			if Bool(mod.sanitize.Properties.Sanitize.Diag.Memtag_heap) {
 				noteDep = "note_memtag_heap_sync"
-			}
-			// If we're using snapshots, redirect to snapshot whenever possible
-			// TODO(b/178470649): clean manual snapshot redirections
-			snapshot, _ := android.ModuleProvider(mctx, cc.SnapshotInfoProvider)
-			if lib, ok := snapshot.StaticLibs[noteDep]; ok {
-				noteDep = lib
 			}
 			depTag := cc.StaticDepTag(true)
 			variations := append(mctx.Target().Variations(),

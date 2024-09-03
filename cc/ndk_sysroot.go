@@ -69,12 +69,12 @@ func RegisterNdkModuleTypes(ctx android.RegistrationContext) {
 	ctx.RegisterParallelSingletonType("ndk", NdkSingleton)
 }
 
-func getNdkInstallBase(ctx android.PathContext) android.InstallPath {
+func getNdkInstallBase(ctx android.PathContext) android.OutputPath {
 	return android.PathForNdkInstall(ctx)
 }
 
 // Returns the main install directory for the NDK sysroot. Usable with --sysroot.
-func getNdkSysrootBase(ctx android.PathContext) android.InstallPath {
+func getNdkSysrootBase(ctx android.PathContext) android.OutputPath {
 	return getNdkInstallBase(ctx).Join(ctx, "sysroot")
 }
 
@@ -150,7 +150,7 @@ func (n *ndkSingleton) GenerateBuildActions(ctx android.SingletonContext) {
 	var installPaths android.Paths
 	var licensePaths android.Paths
 	ctx.VisitAllModules(func(module android.Module) {
-		if m, ok := module.(android.Module); ok && !m.Enabled() {
+		if m, ok := module.(android.Module); ok && !m.Enabled(ctx) {
 			return
 		}
 

@@ -31,7 +31,6 @@ func init() {
 
 var sdkFrameworkAidlPathKey = android.NewOnceKey("sdkFrameworkAidlPathKey")
 var nonUpdatableFrameworkAidlPathKey = android.NewOnceKey("nonUpdatableFrameworkAidlPathKey")
-var apiFingerprintPathKey = android.NewOnceKey("apiFingerprintPathKey")
 
 func UseApiFingerprint(ctx android.BaseModuleContext) (useApiFingerprint bool, fingerprintSdkVersion string, fingerprintDeps android.OutputPath) {
 	if ctx.Config().UnbundledBuild() && !ctx.Config().AlwaysUsePrebuiltSdks() {
@@ -45,8 +44,8 @@ func UseApiFingerprint(ctx android.BaseModuleContext) (useApiFingerprint bool, f
 
 		useApiFingerprint = apiFingerprintTrue || dessertShaIsSet
 		if apiFingerprintTrue {
-			fingerprintSdkVersion = ctx.Config().PlatformSdkCodename() + fmt.Sprintf(".$$(cat %s)", ApiFingerprintPath(ctx).String())
-			fingerprintDeps = ApiFingerprintPath(ctx)
+			fingerprintSdkVersion = ctx.Config().PlatformSdkCodename() + fmt.Sprintf(".$$(cat %s)", android.ApiFingerprintPath(ctx).String())
+			fingerprintDeps = android.ApiFingerprintPath(ctx)
 		}
 		if dessertShaIsSet {
 			fingerprintSdkVersion = ctx.Config().Getenv("UNBUNDLED_BUILD_TARGET_SDK_WITH_DESSERT_SHA")
@@ -66,6 +65,12 @@ func defaultJavaLanguageVersion(ctx android.EarlyModuleContext, s android.SdkSpe
 		return JAVA_VERSION_9
 	} else if sdk.FinalOrFutureInt() <= 33 {
 		return JAVA_VERSION_11
+	} else if ctx.Config().TargetsJava21() {
+		// Temporary experimental flag to be able to try and build with
+		// java version 21 options.  The flag, if used, just sets Java
+		// 21 as the default version, leaving any components that
+		// target an older version intact.
+		return JAVA_VERSION_21
 	} else {
 		return JAVA_VERSION_17
 	}
@@ -337,7 +342,7 @@ func nonUpdatableFrameworkAidlPath(ctx android.PathContext) android.OutputPath {
 
 // Create api_fingerprint.txt
 func createAPIFingerprint(ctx android.SingletonContext) {
-	out := ApiFingerprintPath(ctx)
+	out := android.ApiFingerprintPath(ctx)
 
 	rule := android.NewRuleBuilder(pctx, ctx)
 
@@ -378,17 +383,11 @@ func createAPIFingerprint(ctx android.SingletonContext) {
 	rule.Build("api_fingerprint", "generate api_fingerprint.txt")
 }
 
-func ApiFingerprintPath(ctx android.PathContext) android.OutputPath {
-	return ctx.Config().Once(apiFingerprintPathKey, func() interface{} {
-		return android.PathForOutput(ctx, "api_fingerprint.txt")
-	}).(android.OutputPath)
-}
-
 func sdkMakeVars(ctx android.MakeVarsContext) {
 	if ctx.Config().AlwaysUsePrebuiltSdks() {
 		return
 	}
 
 	ctx.Strict("FRAMEWORK_AIDL", sdkFrameworkAidlPath(ctx).String())
-	ctx.Strict("API_FINGERPRINT", ApiFingerprintPath(ctx).String())
+	ctx.Strict("API_FINGERPRINT", android.ApiFingerprintPath(ctx).String())
 }

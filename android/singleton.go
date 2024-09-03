@@ -87,6 +87,9 @@ type SingletonContext interface {
 	// builder whenever a file matching the pattern as added or removed, without rerunning if a
 	// file that does not match the pattern is added to a searched directory.
 	GlobWithDeps(pattern string, excludes []string) ([]string, error)
+
+	// OtherModulePropertyErrorf reports an error on the line number of the given property of the given module
+	OtherModulePropertyErrorf(module Module, property string, format string, args ...interface{})
 }
 
 type singletonAdaptor struct {
@@ -251,7 +254,7 @@ func (s *singletonContextAdaptor) FinalModule(module Module) Module {
 
 func (s *singletonContextAdaptor) ModuleVariantsFromName(referer Module, name string) []Module {
 	// get module reference for visibility enforcement
-	qualified := createVisibilityModuleReference(s.ModuleName(referer), s.ModuleDir(referer), s.ModuleType(referer))
+	qualified := createVisibilityModuleReference(s.ModuleName(referer), s.ModuleDir(referer), referer)
 
 	modules := s.SingletonContext.ModuleVariantsFromName(referer, name)
 	result := make([]Module, 0, len(modules))
@@ -278,4 +281,8 @@ func (s *singletonContextAdaptor) ModuleVariantsFromName(referer Module, name st
 
 func (s *singletonContextAdaptor) moduleProvider(module blueprint.Module, provider blueprint.AnyProviderKey) (any, bool) {
 	return s.SingletonContext.ModuleProvider(module, provider)
+}
+
+func (s *singletonContextAdaptor) OtherModulePropertyErrorf(module Module, property string, format string, args ...interface{}) {
+	s.blueprintSingletonContext().OtherModulePropertyErrorf(module, property, format, args...)
 }

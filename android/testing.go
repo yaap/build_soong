@@ -1014,10 +1014,18 @@ func (m TestingModule) VariablesForTestsRelativeToTop() map[string]string {
 	return normalizeStringMapRelativeToTop(m.config, m.module.VariablesForTests())
 }
 
-// OutputFiles calls OutputFileProducer.OutputFiles on the encapsulated module, exits the test
-// immediately if there is an error and otherwise returns the result of calling Paths.RelativeToTop
+// OutputFiles first checks if module base outputFiles property has any output
+// files can be used to return.
+// If not, it calls OutputFileProducer.OutputFiles on the
+// encapsulated module, exits the test immediately if there is an error and
+// otherwise returns the result of calling Paths.RelativeToTop
 // on the returned Paths.
 func (m TestingModule) OutputFiles(t *testing.T, tag string) Paths {
+	// TODO: add non-empty-string tag case and remove OutputFileProducer part
+	if tag == "" && m.module.base().outputFiles.DefaultOutputFiles != nil {
+		return m.module.base().outputFiles.DefaultOutputFiles.RelativeToTop()
+	}
+
 	producer, ok := m.module.(OutputFileProducer)
 	if !ok {
 		t.Fatalf("%q must implement OutputFileProducer\n", m.module.Name())
@@ -1122,7 +1130,7 @@ func AndroidMkEntriesForTest(t *testing.T, ctx *TestContext, mod blueprint.Modul
 
 	entriesList := p.AndroidMkEntries()
 	aconfigUpdateAndroidMkEntries(ctx, mod.(Module), &entriesList)
-	for i, _ := range entriesList {
+	for i := range entriesList {
 		entriesList[i].fillInEntries(ctx, mod)
 	}
 	return entriesList
@@ -1285,5 +1293,23 @@ func EnsureListContainsSuffix(t *testing.T, result []string, expected string) {
 	t.Helper()
 	if !SuffixInList(result, expected) {
 		t.Errorf("%q is not found in %v", expected, result)
+	}
+}
+
+type panickingConfigAndErrorContext struct {
+	ctx *TestContext
+}
+
+func (ctx *panickingConfigAndErrorContext) OtherModulePropertyErrorf(module Module, property, fmt string, args ...interface{}) {
+	panic(ctx.ctx.PropertyErrorf(module, property, fmt, args...).Error())
+}
+
+func (ctx *panickingConfigAndErrorContext) Config() Config {
+	return ctx.ctx.Config()
+}
+
+func PanickingConfigAndErrorContext(ctx *TestContext) ConfigAndErrorContext {
+	return &panickingConfigAndErrorContext{
+		ctx: ctx,
 	}
 }

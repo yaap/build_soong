@@ -15,7 +15,6 @@
 package aconfig
 
 import (
-	"fmt"
 	"strings"
 
 	"android/soong/android"
@@ -44,8 +43,6 @@ type DeclarationsModule struct {
 		// The flags will only be repackaged if this prop is true.
 		Exportable bool
 	}
-
-	intermediatePath android.WritablePath
 }
 
 func DeclarationsFactory() android.Module {
@@ -73,8 +70,9 @@ func (module *DeclarationsModule) DepsMutator(ctx android.BottomUpMutatorContext
 	if len(module.properties.Package) == 0 {
 		ctx.PropertyErrorf("package", "missing package property")
 	}
-	// TODO(b/311155208): Add mandatory check for container after all pre-existing
-	// ones are changed.
+	if len(module.properties.Container) == 0 {
+		ctx.PropertyErrorf("container", "missing container property")
+	}
 
 	// Add a dependency on the aconfig_value_sets defined in
 	// RELEASE_ACONFIG_VALUE_SETS, and add any aconfig_values that
@@ -82,18 +80,6 @@ func (module *DeclarationsModule) DepsMutator(ctx android.BottomUpMutatorContext
 	valuesFromConfig := ctx.Config().ReleaseAconfigValueSets()
 	if len(valuesFromConfig) > 0 {
 		ctx.AddDependency(ctx.Module(), implicitValuesTag, valuesFromConfig...)
-	}
-}
-
-func (module *DeclarationsModule) OutputFiles(tag string) (android.Paths, error) {
-	switch tag {
-	case "":
-		// The default output of this module is the intermediates format, which is
-		// not installable and in a private format that no other rules can handle
-		// correctly.
-		return []android.Path{module.intermediatePath}, nil
-	default:
-		return nil, fmt.Errorf("unsupported aconfig_declarations module reference tag %q", tag)
 	}
 }
 
@@ -137,18 +123,22 @@ func (module *DeclarationsModule) GenerateAndroidBuildActions(ctx android.Module
 	inputFiles := make([]android.Path, len(declarationFiles))
 	copy(inputFiles, declarationFiles)
 	inputFiles = append(inputFiles, valuesFiles...)
+	args := map[string]string{
+		"release_version":    ctx.Config().ReleaseVersion(),
+		"package":            module.properties.Package,
+		"declarations":       android.JoinPathsWithPrefix(declarationFiles, "--declarations "),
+		"values":             joinAndPrefix(" --values ", module.properties.Values),
+		"default-permission": optionalVariable(" --default-permission ", defaultPermission),
+	}
+	if len(module.properties.Container) > 0 {
+		args["container"] = "--container " + module.properties.Container
+	}
 	ctx.Build(pctx, android.BuildParams{
 		Rule:        aconfigRule,
 		Output:      intermediateCacheFilePath,
 		Inputs:      inputFiles,
 		Description: "aconfig_declarations",
-		Args: map[string]string{
-			"release_version":    ctx.Config().ReleaseVersion(),
-			"package":            module.properties.Package,
-			"declarations":       android.JoinPathsWithPrefix(declarationFiles, "--declarations "),
-			"values":             joinAndPrefix(" --values ", module.properties.Values),
-			"default-permission": optionalVariable(" --default-permission ", defaultPermission),
-		},
+		Args:        args,
 	})
 
 	intermediateDumpFilePath := android.PathForModuleOut(ctx, "intermediate.txt")
@@ -166,5 +156,4 @@ func (module *DeclarationsModule) GenerateAndroidBuildActions(ctx android.Module
 		IntermediateCacheOutputPath: intermediateCacheFilePath,
 		IntermediateDumpOutputPath:  intermediateDumpFilePath,
 	})
-
 }

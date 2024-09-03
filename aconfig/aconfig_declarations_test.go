@@ -69,3 +69,68 @@ func TestAconfigDeclarationsWithExportableUnset(t *testing.T) {
 	depData, _ := android.SingletonModuleProvider(result, module, android.AconfigDeclarationsProviderKey)
 	android.AssertBoolEquals(t, "exportable", depData.Exportable, false)
 }
+
+func TestAconfigDeclarationsWithContainer(t *testing.T) {
+	bp := `
+		aconfig_declarations {
+			name: "module_name",
+			package: "com.example.package",
+			container: "com.android.foo",
+			srcs: [
+				"foo.aconfig",
+			],
+		}
+	`
+	result := runTest(t, android.FixtureExpectsNoErrors, bp)
+
+	module := result.ModuleForTests("module_name", "")
+	rule := module.Rule("aconfig")
+	android.AssertStringEquals(t, "rule must contain container", rule.Args["container"], "--container com.android.foo")
+}
+
+func TestMandatoryProperties(t *testing.T) {
+	testCases := []struct {
+		name          string
+		expectedError string
+		bp            string
+	}{
+		{
+			name: "Srcs missing from aconfig_declarations",
+			bp: `
+				aconfig_declarations {
+					name: "my_aconfig_declarations_foo",
+					package: "com.example.package",
+					container: "otherapex",
+				}`,
+			expectedError: `missing source files`,
+		},
+		{
+			name: "Package missing from aconfig_declarations",
+			bp: `
+				aconfig_declarations {
+					name: "my_aconfig_declarations_foo",
+					container: "otherapex",
+					srcs: ["foo.aconfig"],
+				}`,
+			expectedError: `missing package property`,
+		},
+		{
+			name: "Container missing from aconfig_declarations",
+			bp: `
+				aconfig_declarations {
+					name: "my_aconfig_declarations_foo",
+					package: "com.example.package",
+					srcs: ["foo.aconfig"],
+				}`,
+			expectedError: `missing container property`,
+		},
+	}
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			errorHandler := android.FixtureExpectsAtLeastOneErrorMatchingPattern(test.expectedError)
+			android.GroupFixturePreparers(PrepareForTestWithAconfigBuildComponents).
+				ExtendWithErrorHandler(errorHandler).
+				RunTestWithBp(t, test.bp)
+		})
+	}
+}

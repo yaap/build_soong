@@ -62,7 +62,7 @@ func (s *genNoticeBuildRules) GenerateBuildActions(ctx SingletonContext) {
 				if mod == nil {
 					continue
 				}
-				if !mod.Enabled() { // don't depend on variants without build rules
+				if !mod.Enabled(ctx) { // don't depend on variants without build rules
 					continue
 				}
 				modules = append(modules, mod)
@@ -176,6 +176,7 @@ func (m *genNoticeModule) GenerateAndroidBuildActions(ctx ModuleContext) {
 	}
 	out := m.getStem() + m.getSuffix()
 	m.output = PathForModuleOut(ctx, out).OutputPath
+	ctx.SetOutputFiles(Paths{m.output}, "")
 }
 
 func GenNoticeFactory() Module {
@@ -191,16 +192,6 @@ func GenNoticeFactory() Module {
 	InitDefaultableModule(module)
 
 	return module
-}
-
-var _ OutputFileProducer = (*genNoticeModule)(nil)
-
-// Implements OutputFileProducer
-func (m *genNoticeModule) OutputFiles(tag string) (Paths, error) {
-	if tag == "" {
-		return Paths{m.output}, nil
-	}
-	return nil, fmt.Errorf("unrecognized tag %q", tag)
 }
 
 var _ AndroidMkEntriesProvider = (*genNoticeModule)(nil)

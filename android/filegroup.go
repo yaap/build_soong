@@ -15,9 +15,11 @@
 package android
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/google/blueprint"
+	"github.com/google/blueprint/proptools"
 )
 
 func init() {
@@ -35,9 +37,9 @@ func RegisterFilegroupBuildComponents(ctx RegistrationContext) {
 
 type fileGroupProperties struct {
 	// srcs lists files that will be included in this filegroup
-	Srcs []string `android:"path"`
+	Srcs proptools.Configurable[[]string] `android:"path"`
 
-	Exclude_srcs []string `android:"path"`
+	Exclude_srcs proptools.Configurable[[]string] `android:"path"`
 
 	// The base path to the files.  May be used by other modules to determine which portion
 	// of the path to use.  For example, when a filegroup is used as data in a cc_test rule,
@@ -55,9 +57,6 @@ type fileGroup struct {
 	DefaultableModuleBase
 	properties fileGroupProperties
 	srcs       Paths
-
-	// Aconfig files for all transitive deps.  Also exposed via TransitiveDeclarationsInfo
-	mergedAconfigFiles map[string]Paths
 }
 
 var _ SourceFileProducer = (*fileGroup)(nil)
@@ -91,12 +90,30 @@ func (fg *fileGroup) JSONActions() []blueprint.JSONAction {
 }
 
 func (fg *fileGroup) GenerateAndroidBuildActions(ctx ModuleContext) {
-	fg.srcs = PathsForModuleSrcExcludes(ctx, fg.properties.Srcs, fg.properties.Exclude_srcs)
+	fg.srcs = PathsForModuleSrcExcludes(ctx, fg.properties.Srcs.GetOrDefault(ctx, nil), fg.properties.Exclude_srcs.GetOrDefault(ctx, nil))
 	if fg.properties.Path != nil {
 		fg.srcs = PathsWithModuleSrcSubDir(ctx, fg.srcs, String(fg.properties.Path))
 	}
 	SetProvider(ctx, blueprint.SrcsFileProviderKey, blueprint.SrcsFileProviderData{SrcPaths: fg.srcs.Strings()})
-	CollectDependencyAconfigFiles(ctx, &fg.mergedAconfigFiles)
+
+	var aconfigDeclarations []string
+	var intermediateCacheOutputPaths Paths
+	var srcjars Paths
+	modeInfos := make(map[string]ModeInfo)
+	ctx.VisitDirectDeps(func(module Module) {
+		if dep, ok := OtherModuleProvider(ctx, module, CodegenInfoProvider); ok {
+			aconfigDeclarations = append(aconfigDeclarations, dep.AconfigDeclarations...)
+			intermediateCacheOutputPaths = append(intermediateCacheOutputPaths, dep.IntermediateCacheOutputPaths...)
+			srcjars = append(srcjars, dep.Srcjars...)
+			maps.Copy(modeInfos, dep.ModeInfos)
+		}
+	})
+	SetProvider(ctx, CodegenInfoProvider, CodegenInfo{
+		AconfigDeclarations:          aconfigDeclarations,
+		IntermediateCacheOutputPaths: intermediateCacheOutputPaths,
+		Srcjars:                      srcjars,
+		ModeInfos:                    modeInfos,
+	})
 }
 
 func (fg *fileGroup) Srcs() Paths {

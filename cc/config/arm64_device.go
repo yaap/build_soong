@@ -49,8 +49,8 @@ var (
 	}
 
 	arm64Ldflags = []string{
-		"-Wl,--hash-style=gnu",
 		"-Wl,-z,separate-code",
+		"-Wl,-z,separate-loadable-segments",
 	}
 
 	arm64Lldflags = arm64Ldflags
@@ -93,46 +93,42 @@ var (
 )
 
 func init() {
-	exportedVars.ExportStringListStaticVariable("Arm64Ldflags", arm64Ldflags)
+	pctx.StaticVariable("Arm64Ldflags", strings.Join(arm64Ldflags, " "))
 
-	exportedVars.ExportStringList("Arm64Lldflags", arm64Lldflags)
 	pctx.VariableFunc("Arm64Lldflags", func(ctx android.PackageVarContext) string {
 		maxPageSizeFlag := "-Wl,-z,max-page-size=" + ctx.Config().MaxPageSizeSupported()
 		flags := append(arm64Lldflags, maxPageSizeFlag)
 		return strings.Join(flags, " ")
 	})
 
-	exportedVars.ExportStringList("Arm64Cflags", arm64Cflags)
 	pctx.VariableFunc("Arm64Cflags", func(ctx android.PackageVarContext) string {
 		flags := arm64Cflags
 		if ctx.Config().NoBionicPageSizeMacro() {
 			flags = append(flags, "-D__BIONIC_NO_PAGE_SIZE_MACRO")
+		} else {
+			flags = append(flags, "-D__BIONIC_DEPRECATED_PAGE_SIZE_MACRO")
 		}
 		return strings.Join(flags, " ")
 	})
 
-	exportedVars.ExportStringListStaticVariable("Arm64Cppflags", arm64Cppflags)
+	pctx.StaticVariable("Arm64Cppflags", strings.Join(arm64Cppflags, " "))
 
-	exportedVars.ExportVariableReferenceDict("Arm64ArchVariantCflags", arm64ArchVariantCflagsVar)
-	exportedVars.ExportVariableReferenceDict("Arm64CpuVariantCflags", arm64CpuVariantCflagsVar)
-	exportedVars.ExportVariableReferenceDict("Arm64CpuVariantLdflags", arm64CpuVariantLdflags)
+	pctx.StaticVariable("Arm64Armv8ACflags", strings.Join(arm64ArchVariantCflags["armv8-a"], " "))
+	pctx.StaticVariable("Arm64Armv8ABranchProtCflags", strings.Join(arm64ArchVariantCflags["armv8-a-branchprot"], " "))
+	pctx.StaticVariable("Arm64Armv82ACflags", strings.Join(arm64ArchVariantCflags["armv8-2a"], " "))
+	pctx.StaticVariable("Arm64Armv82ADotprodCflags", strings.Join(arm64ArchVariantCflags["armv8-2a-dotprod"], " "))
+	pctx.StaticVariable("Arm64Armv9ACflags", strings.Join(arm64ArchVariantCflags["armv9-a"], " "))
 
-	exportedVars.ExportStringListStaticVariable("Arm64Armv8ACflags", arm64ArchVariantCflags["armv8-a"])
-	exportedVars.ExportStringListStaticVariable("Arm64Armv8ABranchProtCflags", arm64ArchVariantCflags["armv8-a-branchprot"])
-	exportedVars.ExportStringListStaticVariable("Arm64Armv82ACflags", arm64ArchVariantCflags["armv8-2a"])
-	exportedVars.ExportStringListStaticVariable("Arm64Armv82ADotprodCflags", arm64ArchVariantCflags["armv8-2a-dotprod"])
-	exportedVars.ExportStringListStaticVariable("Arm64Armv9ACflags", arm64ArchVariantCflags["armv9-a"])
+	pctx.StaticVariable("Arm64CortexA53Cflags", strings.Join(arm64CpuVariantCflags["cortex-a53"], " "))
+	pctx.StaticVariable("Arm64CortexA55Cflags", strings.Join(arm64CpuVariantCflags["cortex-a55"], " "))
+	pctx.StaticVariable("Arm64KryoCflags", strings.Join(arm64CpuVariantCflags["kryo"], " "))
+	pctx.StaticVariable("Arm64ExynosM1Cflags", strings.Join(arm64CpuVariantCflags["exynos-m1"], " "))
+	pctx.StaticVariable("Arm64ExynosM2Cflags", strings.Join(arm64CpuVariantCflags["exynos-m2"], " "))
+	pctx.StaticVariable("Arm64CortexA510Cflags", strings.Join(arm64CpuVariantCflags["cortex-a510"], " "))
+	pctx.StaticVariable("Arm64CortexA76Cflags", strings.Join(arm64CpuVariantCflags["cortex-a76"], " "))
+	pctx.StaticVariable("Arm64Kryo385Cflags", strings.Join(arm64CpuVariantCflags["kryo385"], " "))
 
-	exportedVars.ExportStringListStaticVariable("Arm64CortexA510Cflags", arm64CpuVariantCflags["cortex-a510"])
-	exportedVars.ExportStringListStaticVariable("Arm64CortexA53Cflags", arm64CpuVariantCflags["cortex-a53"])
-	exportedVars.ExportStringListStaticVariable("Arm64CortexA55Cflags", arm64CpuVariantCflags["cortex-a55"])
-	exportedVars.ExportStringListStaticVariable("Arm64CortexA76Cflags", arm64CpuVariantCflags["cortex-a76"])
-	exportedVars.ExportStringListStaticVariable("Arm64KryoCflags", arm64CpuVariantCflags["kryo"])
-	exportedVars.ExportStringListStaticVariable("Arm64Kryo385Cflags", arm64CpuVariantCflags["kryo385"])
-	exportedVars.ExportStringListStaticVariable("Arm64ExynosM1Cflags", arm64CpuVariantCflags["exynos-m1"])
-	exportedVars.ExportStringListStaticVariable("Arm64ExynosM2Cflags", arm64CpuVariantCflags["exynos-m2"])
-
-	exportedVars.ExportStringListStaticVariable("Arm64FixCortexA53Ldflags", []string{"-Wl,--fix-cortex-a53-843419"})
+	pctx.StaticVariable("Arm64FixCortexA53Ldflags", "-Wl,--fix-cortex-a53-843419")
 }
 
 var (
@@ -146,16 +142,16 @@ var (
 
 	arm64CpuVariantCflagsVar = map[string]string{
 		"cortex-a510": "${config.Arm64CortexA510Cflags}",
-		"cortex-a53": "${config.Arm64CortexA53Cflags}",
-		"cortex-a55": "${config.Arm64CortexA55Cflags}",
-		"cortex-a72": "${config.Arm64CortexA53Cflags}",
-		"cortex-a73": "${config.Arm64CortexA53Cflags}",
-		"cortex-a75": "${config.Arm64CortexA55Cflags}",
-		"cortex-a76": "${config.Arm64CortexA76Cflags}",
-		"kryo":       "${config.Arm64KryoCflags}",
-		"kryo385":    "${config.Arm64Kryo385Cflags}",
-		"exynos-m1":  "${config.Arm64ExynosM1Cflags}",
-		"exynos-m2":  "${config.Arm64ExynosM2Cflags}",
+		"cortex-a53":  "${config.Arm64CortexA53Cflags}",
+		"cortex-a55":  "${config.Arm64CortexA55Cflags}",
+		"cortex-a72":  "${config.Arm64CortexA53Cflags}",
+		"cortex-a73":  "${config.Arm64CortexA53Cflags}",
+		"cortex-a75":  "${config.Arm64CortexA55Cflags}",
+		"cortex-a76":  "${config.Arm64CortexA76Cflags}",
+		"kryo":        "${config.Arm64KryoCflags}",
+		"kryo385":     "${config.Arm64Kryo385Cflags}",
+		"exynos-m1":   "${config.Arm64ExynosM1Cflags}",
+		"exynos-m2":   "${config.Arm64ExynosM2Cflags}",
 	}
 
 	arm64CpuVariantLdflags = map[string]string{

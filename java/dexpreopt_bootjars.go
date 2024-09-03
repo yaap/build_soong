@@ -562,7 +562,7 @@ func gatherBootclasspathFragments(ctx android.ModuleContext) map[string]android.
 	return ctx.Config().Once(dexBootJarsFragmentsKey, func() interface{} {
 		fragments := make(map[string]android.Module)
 		ctx.WalkDeps(func(child, parent android.Module) bool {
-			if !isActiveModule(child) {
+			if !isActiveModule(ctx, child) {
 				return false
 			}
 			tag := ctx.OtherModuleDependencyTag(child)
@@ -612,6 +612,9 @@ func (d *dexpreoptBootJars) GenerateAndroidBuildActions(ctx android.ModuleContex
 			profileInstalls:            profileInstalls,
 			profileLicenseMetadataFile: android.OptionalPathForPath(ctx.LicenseMetadataFile()),
 		})
+		for _, install := range profileInstalls {
+			packageFile(ctx, install)
+		}
 	}
 }
 
@@ -929,6 +932,35 @@ func getApexNameToApexExportsInfoMap(ctx android.ModuleContext) apexNameToApexEx
 	return apexNameToApexExportsInfoMap
 }
 
+func packageFileForTargetImage(ctx android.ModuleContext, image *bootImageVariant) {
+	if image.target.Os != ctx.Os() {
+		// This is not for the target device.
+		return
+	}
+
+	for _, install := range image.installs {
+		packageFile(ctx, install)
+	}
+
+	for _, install := range image.vdexInstalls {
+		if image.target.Arch.ArchType.Name != ctx.DeviceConfig().DeviceArch() {
+			// Note that the vdex files are identical between architectures. If the target image is
+			// not for the primary architecture create symlinks to share the vdex of the primary
+			// architecture with the other architectures.
+			//
+			// Assuming that the install path has the architecture name with it, replace the
+			// architecture name with the primary architecture name to find the source vdex file.
+			installPath, relDir, name := getModuleInstallPathInfo(ctx, install.To)
+			if name != "" {
+				srcRelDir := strings.Replace(relDir, image.target.Arch.ArchType.Name, ctx.DeviceConfig().DeviceArch(), 1)
+				ctx.InstallSymlink(installPath.Join(ctx, relDir), name, installPath.Join(ctx, srcRelDir, name))
+			}
+		} else {
+			packageFile(ctx, install)
+		}
+	}
+}
+
 // Generate boot image build rules for a specific target.
 func buildBootImageVariant(ctx android.ModuleContext, image *bootImageVariant, profile android.Path) bootImageVariantOutputs {
 
@@ -1123,9 +1155,10 @@ func buildBootImageVariant(ctx android.ModuleContext, image *bootImageVariant, p
 	image.installs = rule.Installs()
 	image.vdexInstalls = vdexInstalls
 	image.unstrippedInstalls = unstrippedInstalls
+	packageFileForTargetImage(ctx, image)
 
 	// Only set the licenseMetadataFile from the active module.
-	if isActiveModule(ctx.Module()) {
+	if isActiveModule(ctx, ctx.Module()) {
 		image.licenseMetadataFile = android.OptionalPathForPath(ctx.LicenseMetadataFile())
 	}
 

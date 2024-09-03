@@ -37,11 +37,7 @@ var prepareForRustTest = android.GroupFixturePreparers(
 
 	genrule.PrepareForTestWithGenRuleBuildComponents,
 
-	PrepareForTestWithRustIncludeVndk,
-	android.FixtureModifyProductVariables(func(variables android.FixtureProductVariables) {
-		variables.DeviceVndkVersion = StringPtr("current")
-		variables.Platform_vndk_version = StringPtr("29")
-	}),
+	PrepareForIntegrationTestWithRust,
 )
 
 var rustMockedFiles = android.MockFS{
@@ -73,59 +69,20 @@ func testRust(t *testing.T, bp string) *android.TestContext {
 	return result.TestContext
 }
 
-func testRustVndk(t *testing.T, bp string) *android.TestContext {
-	return testRustVndkFs(t, bp, rustMockedFiles)
-}
-
 const (
-	sharedVendorVariant        = "android_vendor.29_arm64_armv8-a_shared"
-	rlibVendorVariant          = "android_vendor.29_arm64_armv8-a_rlib_rlib-std"
-	rlibDylibStdVendorVariant  = "android_vendor.29_arm64_armv8-a_rlib_rlib-std"
-	dylibVendorVariant         = "android_vendor.29_arm64_armv8-a_dylib"
+	sharedVendorVariant        = "android_vendor_arm64_armv8-a_shared"
+	rlibVendorVariant          = "android_vendor_arm64_armv8-a_rlib_rlib-std"
+	rlibDylibStdVendorVariant  = "android_vendor_arm64_armv8-a_rlib_rlib-std"
+	dylibVendorVariant         = "android_vendor_arm64_armv8-a_dylib"
 	sharedRecoveryVariant      = "android_recovery_arm64_armv8-a_shared"
 	rlibRecoveryVariant        = "android_recovery_arm64_armv8-a_rlib_dylib-std"
 	rlibRlibStdRecoveryVariant = "android_recovery_arm64_armv8-a_rlib_rlib-std"
 	dylibRecoveryVariant       = "android_recovery_arm64_armv8-a_dylib"
 	binaryCoreVariant          = "android_arm64_armv8-a"
-	binaryVendorVariant        = "android_vendor.29_arm64_armv8-a"
-	binaryProductVariant       = "android_product.29_arm64_armv8-a"
+	binaryVendorVariant        = "android_vendor_arm64_armv8-a"
+	binaryProductVariant       = "android_product_arm64_armv8-a"
 	binaryRecoveryVariant      = "android_recovery_arm64_armv8-a"
 )
-
-func testRustVndkFs(t *testing.T, bp string, fs android.MockFS) *android.TestContext {
-	return testRustVndkFsVersions(t, bp, fs, "current", "current", "29")
-}
-
-func testRustVndkFsVersions(t *testing.T, bp string, fs android.MockFS, device_version, product_version, vndk_version string) *android.TestContext {
-	skipTestIfOsNotSupported(t)
-	result := android.GroupFixturePreparers(
-		prepareForRustTest,
-		fs.AddToFixture(),
-		android.FixtureModifyProductVariables(
-			func(variables android.FixtureProductVariables) {
-				variables.DeviceVndkVersion = StringPtr(device_version)
-				variables.Platform_vndk_version = StringPtr(vndk_version)
-			},
-		),
-	).RunTestWithBp(t, bp)
-	return result.TestContext
-}
-
-func testRustRecoveryFsVersions(t *testing.T, bp string, fs android.MockFS, device_version, vndk_version, recovery_version string) *android.TestContext {
-	skipTestIfOsNotSupported(t)
-	result := android.GroupFixturePreparers(
-		prepareForRustTest,
-		fs.AddToFixture(),
-		android.FixtureModifyProductVariables(
-			func(variables android.FixtureProductVariables) {
-				variables.DeviceVndkVersion = StringPtr(device_version)
-				variables.RecoverySnapshotVersion = StringPtr(recovery_version)
-				variables.Platform_vndk_version = StringPtr(vndk_version)
-			},
-		),
-	).RunTestWithBp(t, bp)
-	return result.TestContext
-}
 
 // testRustCov returns a TestContext in which a basic environment has been
 // setup. This environment explicitly enables coverage.
@@ -153,27 +110,6 @@ func testRustError(t *testing.T, pattern string, bp string) {
 	android.GroupFixturePreparers(
 		prepareForRustTest,
 		rustMockedFiles.AddToFixture(),
-	).
-		ExtendWithErrorHandler(android.FixtureExpectsAtLeastOneErrorMatchingPattern(pattern)).
-		RunTestWithBp(t, bp)
-}
-
-// testRustVndkError is similar to testRustError, but can be used to test VNDK-related errors.
-func testRustVndkError(t *testing.T, pattern string, bp string) {
-	testRustVndkFsError(t, pattern, bp, rustMockedFiles)
-}
-
-func testRustVndkFsError(t *testing.T, pattern string, bp string, fs android.MockFS) {
-	skipTestIfOsNotSupported(t)
-	android.GroupFixturePreparers(
-		prepareForRustTest,
-		fs.AddToFixture(),
-		android.FixtureModifyProductVariables(
-			func(variables android.FixtureProductVariables) {
-				variables.DeviceVndkVersion = StringPtr("current")
-				variables.Platform_vndk_version = StringPtr("VER")
-			},
-		),
 	).
 		ExtendWithErrorHandler(android.FixtureExpectsAtLeastOneErrorMatchingPattern(pattern)).
 		RunTestWithBp(t, bp)
@@ -214,15 +150,11 @@ func TestDepsTracking(t *testing.T) {
 			host_supported: true,
 			name: "cc_stubs_dep",
 		}
-		rust_ffi_host_static {
+		cc_library_host_static {
 			name: "libstatic",
-			srcs: ["foo.rs"],
-			crate_name: "static",
 		}
-		rust_ffi_host_static {
+		cc_library_host_static {
 			name: "libwholestatic",
-			srcs: ["foo.rs"],
-			crate_name: "wholestatic",
 		}
 		rust_ffi_host_shared {
 			name: "libshared",
@@ -468,6 +400,134 @@ func TestLibrarySizes(t *testing.T) {
 	m := ctx.SingletonForTests("file_metrics")
 	m.Output("unstripped/libwaldo.dylib.so.bloaty.csv")
 	m.Output("libwaldo.dylib.so.bloaty.csv")
+}
+
+// Test that aliases are respected.
+func TestRustAliases(t *testing.T) {
+	ctx := testRust(t, `
+		rust_library {
+			name: "libbar",
+			crate_name: "bar",
+			srcs: ["src/lib.rs"],
+		}
+		rust_library {
+			name: "libbaz",
+			crate_name: "baz",
+			srcs: ["src/lib.rs"],
+		}
+		rust_binary {
+			name: "foo",
+			srcs: ["src/main.rs"],
+			rustlibs: ["libbar", "libbaz"],
+			aliases: ["bar:bar_renamed"],
+		}`)
+
+	fooRustc := ctx.ModuleForTests("foo", "android_arm64_armv8-a").Rule("rustc")
+	if !strings.Contains(fooRustc.Args["libFlags"], "--extern bar_renamed=out/soong/.intermediates/libbar/android_arm64_armv8-a_dylib/unstripped/libbar.dylib.so") {
+		t.Errorf("--extern bar_renamed=out/soong/.intermediates/libbar/android_arm64_armv8-a_dylib/unstripped/libbar.dylib.so flag not being passed to rustc for rust_binary with aliases. libFlags: %#v", fooRustc.Args["libFlags"])
+	}
+	if !strings.Contains(fooRustc.Args["libFlags"], "--extern baz=out/soong/.intermediates/libbaz/android_arm64_armv8-a_dylib/unstripped/libbaz.dylib.so") {
+		t.Errorf("--extern baz=out/soong/.intermediates/libbaz/android_arm64_armv8-a_dylib/unstripped/libbaz.dylib.so flag not being passed to rustc for rust_binary with aliases. libFlags: %#v", fooRustc.Args["libFlags"])
+	}
+}
+
+func TestRustRlibs(t *testing.T) {
+	ctx := testRust(t, `
+		rust_ffi_rlib {
+			name: "libbar",
+			crate_name: "bar",
+			srcs: ["src/lib.rs"],
+			export_include_dirs: ["bar_includes"]
+		}
+
+		rust_ffi_rlib {
+			name: "libfoo",
+			crate_name: "foo",
+			srcs: ["src/lib.rs"],
+			export_include_dirs: ["foo_includes"]
+		}
+
+		cc_library_shared {
+			name: "libcc_shared",
+			srcs:["foo.c"],
+			static_rlibs: ["libbar"],
+		}
+
+		cc_library_static {
+			name: "libcc_static",
+			srcs:["foo.c"],
+			static_rlibs: ["libfoo"],
+		}
+
+		cc_binary {
+			name: "ccBin",
+			srcs:["foo.c"],
+			static_rlibs: ["libbar"],
+			static_libs: ["libcc_static"],
+		}
+		`)
+
+	libbar := ctx.ModuleForTests("libbar", "android_arm64_armv8-a_rlib_rlib-std").Rule("rustc")
+	libcc_shared_rustc := ctx.ModuleForTests("libcc_shared", "android_arm64_armv8-a_shared").Rule("rustc")
+	libcc_shared_ld := ctx.ModuleForTests("libcc_shared", "android_arm64_armv8-a_shared").Rule("ld")
+	libcc_shared_cc := ctx.ModuleForTests("libcc_shared", "android_arm64_armv8-a_shared").Rule("cc")
+	ccbin_rustc := ctx.ModuleForTests("ccBin", "android_arm64_armv8-a").Rule("rustc")
+	ccbin_ld := ctx.ModuleForTests("ccBin", "android_arm64_armv8-a").Rule("ld")
+	ccbin_cc := ctx.ModuleForTests("ccBin", "android_arm64_armv8-a").Rule("cc")
+
+	if !strings.Contains(libbar.Args["rustcFlags"], "crate-type=rlib") {
+		t.Errorf("missing crate-type for static variant, expecting %#v, rustcFlags: %#v", "rlib", libbar.Args["rustcFlags"])
+	}
+
+	// Make sure there's a rustc command, and it's producing a staticlib
+	if !strings.Contains(libcc_shared_rustc.Args["rustcFlags"], "crate-type=staticlib") {
+		t.Errorf("missing crate-type for static variant, expecting %#v, rustcFlags: %#v",
+			"staticlib", libcc_shared_rustc.Args["rustcFlags"])
+	}
+
+	// Make sure the static lib is included in the ld command
+	if !strings.Contains(libcc_shared_ld.Args["libFlags"], "generated_rust_staticlib/liblibcc_shared_rust_staticlib.a") {
+		t.Errorf("missing generated static library in linker step libFlags %#v, libFlags: %#v",
+			"libcc_shared.generated_rust_staticlib.a", libcc_shared_ld.Args["libFlags"])
+	}
+
+	// Make sure the static lib includes are in the cc command
+	if !strings.Contains(libcc_shared_cc.Args["cFlags"], "-Ibar_includes") {
+		t.Errorf("missing rlibs includes, expecting %#v, cFlags: %#v",
+			"-Ibar_includes", libcc_shared_cc.Args["cFlags"])
+	}
+
+	// Make sure there's a rustc command, and it's producing a staticlib
+	if !strings.Contains(ccbin_rustc.Args["rustcFlags"], "crate-type=staticlib") {
+		t.Errorf("missing crate-type for static variant, expecting %#v, rustcFlags: %#v", "staticlib", ccbin_rustc.Args["rustcFlags"])
+	}
+
+	// Make sure the static lib is included in the cc command
+	if !strings.Contains(ccbin_ld.Args["libFlags"], "generated_rust_staticlib/libccBin_rust_staticlib.a") {
+		t.Errorf("missing generated static library in linker step libFlags, expecting %#v, libFlags: %#v",
+			"ccBin.generated_rust_staticlib.a", ccbin_ld.Args["libFlags"])
+	}
+
+	// Make sure the static lib includes are in the ld command
+	if !strings.Contains(ccbin_cc.Args["cFlags"], "-Ibar_includes") {
+		t.Errorf("missing rlibs includes, expecting %#v, cFlags: %#v",
+			"-Ibar_includes", ccbin_cc.Args)
+	}
+
+	// Make sure that direct dependencies and indirect dependencies are
+	// propagating correctly to the generated rlib.
+	if !strings.Contains(ccbin_rustc.Args["libFlags"], "--extern foo=") {
+		t.Errorf("Missing indirect dependency libfoo when writing generated Rust staticlib: %#v", ccbin_rustc.Args["libFlags"])
+	}
+	if !strings.Contains(ccbin_rustc.Args["libFlags"], "--extern bar=") {
+		t.Errorf("Missing direct dependency libbar when writing generated Rust staticlib: %#v", ccbin_rustc.Args["libFlags"])
+	}
+
+	// Test indirect includes propagation
+	if !strings.Contains(ccbin_cc.Args["cFlags"], "-Ifoo_includes") {
+		t.Errorf("missing rlibs includes, expecting %#v, cFlags: %#v",
+			"-Ifoo_includes", ccbin_cc.Args)
+	}
 }
 
 func assertString(t *testing.T, got, expected string) {

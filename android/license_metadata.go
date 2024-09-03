@@ -36,7 +36,7 @@ var (
 func buildLicenseMetadata(ctx ModuleContext, licenseMetadataFile WritablePath) {
 	base := ctx.Module().base()
 
-	if !base.Enabled() {
+	if !base.Enabled(ctx) {
 		return
 	}
 
@@ -69,12 +69,17 @@ func buildLicenseMetadata(ctx ModuleContext, licenseMetadataFile WritablePath) {
 		if dep == nil {
 			return
 		}
-		if !dep.Enabled() {
+		if !dep.Enabled(ctx) {
 			return
 		}
 
 		// Defaults add properties and dependencies that get processed on their own.
 		if ctx.OtherModuleDependencyTag(dep) == DefaultsDepTag {
+			return
+		}
+		// The required dependencies just say modules A and B should be installed together.
+		// It doesn't mean that one is built using the other.
+		if ctx.OtherModuleDependencyTag(dep) == RequiredDepTag {
 			return
 		}
 
@@ -190,7 +195,7 @@ func isContainerFromFileExtensions(installPaths InstallPaths, builtPaths Paths) 
 
 	for _, path := range paths {
 		switch path.Ext() {
-		case ".zip", ".tar", ".tgz", ".tar.gz", ".img", ".srcszip", ".apex":
+		case ".zip", ".tar", ".tgz", ".tar.gz", ".img", ".srcszip", ".apex", ".capex":
 			return true
 		}
 	}

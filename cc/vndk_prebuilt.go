@@ -49,6 +49,8 @@ var (
 //	    },
 //	}
 type vndkPrebuiltProperties struct {
+	VndkProperties
+
 	// VNDK snapshot version.
 	Version *string
 
@@ -131,16 +133,6 @@ func (p *vndkPrebuiltLibraryDecorator) singleSourcePath(ctx ModuleContext) andro
 
 func (p *vndkPrebuiltLibraryDecorator) link(ctx ModuleContext,
 	flags Flags, deps PathDeps, objs Objects) android.Path {
-	platformVndkVersion := ctx.DeviceConfig().PlatformVndkVersion()
-	if platformVndkVersion != "" {
-		platformVndkApiLevel := android.ApiLevelOrPanic(ctx, platformVndkVersion)
-		if platformVndkApiLevel.LessThanOrEqualTo(android.ApiLevelOrPanic(ctx, p.Version())) {
-			// This prebuilt VNDK module is not required for the current build
-			ctx.Module().HideFromMake()
-			return nil
-		}
-	}
-
 	if !p.MatchesWithDevice(ctx.DeviceConfig()) {
 		ctx.Module().HideFromMake()
 		return nil
@@ -168,11 +160,6 @@ func (p *vndkPrebuiltLibraryDecorator) link(ctx ModuleContext,
 		TransformSharedObjectToToc(ctx, in, tocFile)
 
 		p.androidMkSuffix = p.NameSuffix()
-
-		vndkVersion := ctx.DeviceConfig().VndkVersion()
-		if vndkVersion == p.Version() {
-			p.androidMkSuffix = ""
-		}
 
 		android.SetProvider(ctx, SharedLibraryInfoProvider, SharedLibraryInfo{
 			SharedLibrary: in,
@@ -282,4 +269,15 @@ func VndkPrebuiltSharedFactory() android.Module {
 
 func init() {
 	android.RegisterModuleType("vndk_prebuilt_shared", VndkPrebuiltSharedFactory)
+}
+
+func IsForVndkApex(mctx android.BottomUpMutatorContext, m *Module) bool {
+	if !m.Enabled(mctx) {
+		return true
+	}
+
+	if p, ok := m.linker.(*vndkPrebuiltLibraryDecorator); ok {
+		return p.MatchesWithDevice(mctx.DeviceConfig()) && Bool(p.properties.Vndk.Enabled)
+	}
+	return false
 }

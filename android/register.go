@@ -16,8 +16,9 @@ package android
 
 import (
 	"fmt"
-	"github.com/google/blueprint"
 	"reflect"
+
+	"github.com/google/blueprint"
 )
 
 // A sortable component is one whose registration order affects the order in which it is executed
@@ -155,7 +156,6 @@ type Context struct {
 func NewContext(config Config) *Context {
 	ctx := &Context{blueprint.NewContext(), config}
 	ctx.SetSrcDir(absSrcDir)
-	ctx.AddIncludeTags(config.IncludeTags()...)
 	ctx.AddSourceRootDirs(config.SourceRootDirs()...)
 	return ctx
 }

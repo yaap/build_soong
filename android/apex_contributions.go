@@ -15,8 +15,6 @@
 package android
 
 import (
-	"strings"
-
 	"github.com/google/blueprint"
 	"github.com/google/blueprint/proptools"
 )
@@ -27,11 +25,13 @@ func init() {
 
 func RegisterApexContributionsBuildComponents(ctx RegistrationContext) {
 	ctx.RegisterModuleType("apex_contributions", apexContributionsFactory)
+	ctx.RegisterModuleType("apex_contributions_defaults", apexContributionsDefaultsFactory)
 	ctx.RegisterSingletonModuleType("all_apex_contributions", allApexContributionsFactory)
 }
 
 type apexContributions struct {
 	ModuleBase
+	DefaultableModuleBase
 	properties contributionProps
 }
 
@@ -61,6 +61,7 @@ func apexContributionsFactory() Module {
 	module := &apexContributions{}
 	module.AddProperties(&module.properties)
 	InitAndroidModule(module)
+	InitDefaultableModule(module)
 	return module
 }
 
@@ -68,6 +69,18 @@ func apexContributionsFactory() Module {
 // It provides metadata that is used in post-deps mutator phase for source vs
 // prebuilts selection.
 func (m *apexContributions) GenerateAndroidBuildActions(ctx ModuleContext) {
+}
+
+type apexContributionsDefaults struct {
+	ModuleBase
+	DefaultsModuleBase
+}
+
+func apexContributionsDefaultsFactory() Module {
+	module := &apexContributionsDefaults{}
+	module.AddProperties(&contributionProps{})
+	InitDefaultsModule(module)
+	return module
 }
 
 // A container for apex_contributions.
@@ -88,32 +101,28 @@ type apexContributionsDepTag struct {
 }
 
 var (
-	acDepTag = apexContributionsDepTag{}
+	AcDepTag = apexContributionsDepTag{}
 )
 
 // Creates a dep to each selected apex_contributions
 func (a *allApexContributions) DepsMutator(ctx BottomUpMutatorContext) {
-	ctx.AddDependency(ctx.Module(), acDepTag, ctx.Config().AllApexContributions()...)
+	// Skip apex_contributions if BuildApexContributionContents is true
+	// This product config var allows some products in the same family to use mainline modules from source
+	// (e.g. shiba and shiba_fullmte)
+	// Eventually these product variants will have their own release config maps.
+	if !proptools.Bool(ctx.Config().BuildIgnoreApexContributionContents()) {
+		ctx.AddDependency(ctx.Module(), AcDepTag, ctx.Config().AllApexContributions()...)
+	}
 }
 
 // Set PrebuiltSelectionInfoProvider in post deps phase
 func (a *allApexContributions) SetPrebuiltSelectionInfoProvider(ctx BaseModuleContext) {
 	addContentsToProvider := func(p *PrebuiltSelectionInfoMap, m *apexContributions) {
 		for _, content := range m.Contents() {
-			// Skip any apexes that have been added to the product specific ignore list
-			if InList(content, ctx.Config().BuildIgnoreApexContributionContents()) {
-				continue
-			}
-			// Coverage builds for TARGET_RELEASE=foo should always build from source,
-			// even if TARGET_RELEASE=foo uses prebuilt mainline modules.
-			// This is necessary because the checked-in prebuilts were generated with
-			// instrumentation turned off.
-			//
-			// Skip any prebuilt contents in coverage builds
-			if strings.HasPrefix(content, "prebuilt_") && (ctx.Config().JavaCoverageEnabled() || ctx.DeviceConfig().NativeCoverageEnabled()) {
-				continue
-			}
-			if !ctx.OtherModuleExists(content) && !ctx.Config().AllowMissingDependencies() {
+			// Verify that the module listed in contents exists in the tree
+			// Remove the prebuilt_ prefix to account for partner worksapces where the source module does not
+			// exist, and PrebuiltRenameMutator renames `prebuilt_foo` to `foo`
+			if !ctx.OtherModuleExists(content) && !ctx.OtherModuleExists(RemoveOptionalPrebuiltPrefix(content)) && !ctx.Config().AllowMissingDependencies() {
 				ctx.ModuleErrorf("%s listed in apex_contributions %s does not exist\n", content, m.Name())
 			}
 			pi := &PrebuiltSelectionInfo{
@@ -126,7 +135,7 @@ func (a *allApexContributions) SetPrebuiltSelectionInfoProvider(ctx BaseModuleCo
 	}
 
 	p := PrebuiltSelectionInfoMap{}
-	ctx.VisitDirectDepsWithTag(acDepTag, func(child Module) {
+	ctx.VisitDirectDepsWithTag(AcDepTag, func(child Module) {
 		if m, ok := child.(*apexContributions); ok {
 			addContentsToProvider(&p, m)
 		} else {

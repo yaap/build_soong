@@ -16,9 +16,11 @@ package android
 
 import (
 	"fmt"
-	"github.com/google/blueprint"
 	"regexp"
 	"strings"
+
+	"github.com/google/blueprint"
+	"github.com/google/blueprint/proptools"
 )
 
 // BaseModuleContext is the same as blueprint.BaseModuleContext except that Config() returns
@@ -214,6 +216,10 @@ type BaseModuleContext interface {
 	// getMissingDependencies returns the list of missing dependencies.
 	// Calling this function prevents adding new dependencies.
 	getMissingDependencies() []string
+
+	// EvaluateConfiguration makes ModuleContext a valid proptools.ConfigurableEvaluator, so this context
+	// can be used to evaluate the final value of Configurable properties.
+	EvaluateConfiguration(condition proptools.ConfigurableCondition, property string) proptools.ConfigurableValue
 }
 
 type baseModuleContext struct {
@@ -299,6 +305,12 @@ type AllowDisabledModuleDependency interface {
 	AllowDisabledModuleDependency(target Module) bool
 }
 
+type AlwaysAllowDisabledModuleDependencyTag struct{}
+
+func (t AlwaysAllowDisabledModuleDependencyTag) AllowDisabledModuleDependency(Module) bool {
+	return true
+}
+
 func (b *baseModuleContext) validateAndroidModule(module blueprint.Module, tag blueprint.DependencyTag, strict bool, ignoreBlueprint bool) Module {
 	aModule, _ := module.(Module)
 
@@ -313,7 +325,7 @@ func (b *baseModuleContext) validateAndroidModule(module blueprint.Module, tag b
 		return nil
 	}
 
-	if !aModule.Enabled() {
+	if !aModule.Enabled(b) {
 		if t, ok := tag.(AllowDisabledModuleDependency); !ok || !t.AllowDisabledModuleDependency(aModule) {
 			if b.Config().AllowMissingDependencies() {
 				b.AddMissingDependencies([]string{b.OtherModuleName(aModule)})
@@ -524,7 +536,7 @@ func IsMetaDependencyTag(tag blueprint.DependencyTag) bool {
 		return true
 	} else if tag == licensesTag {
 		return true
-	} else if tag == acDepTag {
+	} else if tag == AcDepTag {
 		return true
 	}
 	return false
@@ -563,4 +575,8 @@ func (b *baseModuleContext) GetPathString(skipFirst bool) string {
 		sb.WriteString(fmt.Sprintf("    -> %s", m.String()))
 	}
 	return sb.String()
+}
+
+func (m *baseModuleContext) EvaluateConfiguration(condition proptools.ConfigurableCondition, property string) proptools.ConfigurableValue {
+	return m.Module().ConfigurableEvaluator(m).EvaluateConfiguration(condition, property)
 }

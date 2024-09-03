@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/google/blueprint"
+	"github.com/google/blueprint/proptools"
 )
 
 // PackagingSpec abstracts a request to place a built artifact at a certain path in a package. A
@@ -43,6 +44,36 @@ type PackagingSpec struct {
 	effectiveLicenseFiles *Paths
 
 	partition string
+
+	// Whether this packaging spec represents an installation of the srcPath (i.e. this struct
+	// is created via InstallFile or InstallSymlink) or a simple packaging (i.e. created via
+	// PackageFile).
+	skipInstall bool
+
+	// Paths of aconfig files for the built artifact
+	aconfigPaths *Paths
+
+	// ArchType of the module which produced this packaging spec
+	archType ArchType
+}
+
+func (p *PackagingSpec) Equals(other *PackagingSpec) bool {
+	if other == nil {
+		return false
+	}
+	if p.relPathInPackage != other.relPathInPackage {
+		return false
+	}
+	if p.srcPath != other.srcPath || p.symlinkTarget != other.symlinkTarget {
+		return false
+	}
+	if p.executable != other.executable {
+		return false
+	}
+	if p.partition != other.partition {
+		return false
+	}
+	return true
 }
 
 // Get file name of installed package
@@ -74,6 +105,15 @@ func (p *PackagingSpec) Partition() string {
 	return p.partition
 }
 
+func (p *PackagingSpec) SkipInstall() bool {
+	return p.skipInstall
+}
+
+// Paths of aconfig files for the built artifact
+func (p *PackagingSpec) GetAconfigPaths() Paths {
+	return *p.aconfigPaths
+}
+
 type PackageModule interface {
 	Module
 	packagingBase() *PackagingBase
@@ -103,18 +143,24 @@ type PackagingBase struct {
 	// for rare cases like when there's a dependency to a module which exists in certain repo
 	// checkouts, this is needed.
 	IgnoreMissingDependencies bool
+
+	// If this is set to true by a module type inheriting PackagingBase, the deps property
+	// collects the first target only even with compile_multilib: true.
+	DepsCollectFirstTargetOnly bool
 }
 
 type depsProperty struct {
 	// Modules to include in this package
-	Deps []string `android:"arch_variant"`
+	Deps proptools.Configurable[[]string] `android:"arch_variant"`
 }
 
 type packagingMultilibProperties struct {
-	First  depsProperty `android:"arch_variant"`
-	Common depsProperty `android:"arch_variant"`
-	Lib32  depsProperty `android:"arch_variant"`
-	Lib64  depsProperty `android:"arch_variant"`
+	First    depsProperty `android:"arch_variant"`
+	Common   depsProperty `android:"arch_variant"`
+	Lib32    depsProperty `android:"arch_variant"`
+	Lib64    depsProperty `android:"arch_variant"`
+	Both     depsProperty `android:"arch_variant"`
+	Prefer32 depsProperty `android:"arch_variant"`
 }
 
 type packagingArchProperties struct {
@@ -125,8 +171,8 @@ type packagingArchProperties struct {
 }
 
 type PackagingProperties struct {
-	Deps     []string                    `android:"arch_variant"`
-	Multilib packagingMultilibProperties `android:"arch_variant"`
+	Deps     proptools.Configurable[[]string] `android:"arch_variant"`
+	Multilib packagingMultilibProperties      `android:"arch_variant"`
 	Arch     packagingArchProperties
 }
 
@@ -144,22 +190,55 @@ func (p *PackagingBase) packagingBase() *PackagingBase {
 // multi target, deps is selected for each of the targets and is NOT selected for the current
 // architecture which would be Common.
 func (p *PackagingBase) getDepsForArch(ctx BaseModuleContext, arch ArchType) []string {
-	var ret []string
-	if arch == ctx.Target().Arch.ArchType && len(ctx.MultiTargets()) == 0 {
-		ret = append(ret, p.properties.Deps...)
-	} else if arch.Multilib == "lib32" {
-		ret = append(ret, p.properties.Multilib.Lib32.Deps...)
-	} else if arch.Multilib == "lib64" {
-		ret = append(ret, p.properties.Multilib.Lib64.Deps...)
-	} else if arch == Common {
-		ret = append(ret, p.properties.Multilib.Common.Deps...)
+	get := func(prop proptools.Configurable[[]string]) []string {
+		return prop.GetOrDefault(ctx, nil)
 	}
 
-	for i, t := range ctx.MultiTargets() {
-		if t.Arch.ArchType == arch {
-			ret = append(ret, p.properties.Deps...)
-			if i == 0 {
-				ret = append(ret, p.properties.Multilib.First.Deps...)
+	var ret []string
+	if arch == ctx.Target().Arch.ArchType && len(ctx.MultiTargets()) == 0 {
+		ret = append(ret, get(p.properties.Deps)...)
+	} else if arch.Multilib == "lib32" {
+		ret = append(ret, get(p.properties.Multilib.Lib32.Deps)...)
+		// multilib.prefer32.deps are added for lib32 only when they support 32-bit arch
+		for _, dep := range get(p.properties.Multilib.Prefer32.Deps) {
+			if checkIfOtherModuleSupportsLib32(ctx, dep) {
+				ret = append(ret, dep)
+			}
+		}
+	} else if arch.Multilib == "lib64" {
+		ret = append(ret, get(p.properties.Multilib.Lib64.Deps)...)
+		// multilib.prefer32.deps are added for lib64 only when they don't support 32-bit arch
+		for _, dep := range get(p.properties.Multilib.Prefer32.Deps) {
+			if !checkIfOtherModuleSupportsLib32(ctx, dep) {
+				ret = append(ret, dep)
+			}
+		}
+	} else if arch == Common {
+		ret = append(ret, get(p.properties.Multilib.Common.Deps)...)
+	}
+
+	if p.DepsCollectFirstTargetOnly {
+		if len(get(p.properties.Multilib.First.Deps)) > 0 {
+			ctx.PropertyErrorf("multilib.first.deps", "not supported. use \"deps\" instead")
+		}
+		for i, t := range ctx.MultiTargets() {
+			if t.Arch.ArchType == arch {
+				ret = append(ret, get(p.properties.Multilib.Both.Deps)...)
+				if i == 0 {
+					ret = append(ret, get(p.properties.Deps)...)
+				}
+			}
+		}
+	} else {
+		if len(get(p.properties.Multilib.Both.Deps)) > 0 {
+			ctx.PropertyErrorf("multilib.both.deps", "not supported. use \"deps\" instead")
+		}
+		for i, t := range ctx.MultiTargets() {
+			if t.Arch.ArchType == arch {
+				ret = append(ret, get(p.properties.Deps)...)
+				if i == 0 {
+					ret = append(ret, get(p.properties.Multilib.First.Deps)...)
+				}
 			}
 		}
 	}
@@ -167,20 +246,20 @@ func (p *PackagingBase) getDepsForArch(ctx BaseModuleContext, arch ArchType) []s
 	if ctx.Arch().ArchType == Common {
 		switch arch {
 		case Arm64:
-			ret = append(ret, p.properties.Arch.Arm64.Deps...)
+			ret = append(ret, get(p.properties.Arch.Arm64.Deps)...)
 		case Arm:
-			ret = append(ret, p.properties.Arch.Arm.Deps...)
+			ret = append(ret, get(p.properties.Arch.Arm.Deps)...)
 		case X86_64:
-			ret = append(ret, p.properties.Arch.X86_64.Deps...)
+			ret = append(ret, get(p.properties.Arch.X86_64.Deps)...)
 		case X86:
-			ret = append(ret, p.properties.Arch.X86.Deps...)
+			ret = append(ret, get(p.properties.Arch.X86.Deps)...)
 		}
 	}
 
 	return FirstUniqueStrings(ret)
 }
 
-func (p *PackagingBase) getSupportedTargets(ctx BaseModuleContext) []Target {
+func getSupportedTargets(ctx BaseModuleContext) []Target {
 	var ret []Target
 	// The current and the common OS targets are always supported
 	ret = append(ret, ctx.Target())
@@ -190,6 +269,28 @@ func (p *PackagingBase) getSupportedTargets(ctx BaseModuleContext) []Target {
 	// If this module is configured for multi targets, those should be supported as well
 	ret = append(ret, ctx.MultiTargets()...)
 	return ret
+}
+
+// getLib32Target returns the 32-bit target from the list of targets this module supports. If this
+// module doesn't support 32-bit target, nil is returned.
+func getLib32Target(ctx BaseModuleContext) *Target {
+	for _, t := range getSupportedTargets(ctx) {
+		if t.Arch.ArchType.Multilib == "lib32" {
+			return &t
+		}
+	}
+	return nil
+}
+
+// checkIfOtherModuleSUpportsLib32 returns true if 32-bit variant of dep exists.
+func checkIfOtherModuleSupportsLib32(ctx BaseModuleContext, dep string) bool {
+	t := getLib32Target(ctx)
+	if t == nil {
+		// This packaging module doesn't support 32bit. No point of checking if dep supports 32-bit
+		// or not.
+		return false
+	}
+	return ctx.OtherModuleFarDependencyVariantExists(t.Variations(), dep)
 }
 
 // PackagingItem is a marker interface for dependency tags.
@@ -212,7 +313,7 @@ func (PackagingItemAlwaysDepTag) IsPackagingItem() bool {
 
 // See PackageModule.AddDeps
 func (p *PackagingBase) AddDeps(ctx BottomUpMutatorContext, depTag blueprint.DependencyTag) {
-	for _, t := range p.getSupportedTargets(ctx) {
+	for _, t := range getSupportedTargets(ctx) {
 		for _, dep := range p.getDepsForArch(ctx, t.Arch.ArchType) {
 			if p.IgnoreMissingDependencies && !ctx.OtherModuleExists(dep) {
 				continue
@@ -224,19 +325,45 @@ func (p *PackagingBase) AddDeps(ctx BottomUpMutatorContext, depTag blueprint.Dep
 
 func (p *PackagingBase) GatherPackagingSpecsWithFilter(ctx ModuleContext, filter func(PackagingSpec) bool) map[string]PackagingSpec {
 	m := make(map[string]PackagingSpec)
+
+	var arches []ArchType
+	for _, target := range getSupportedTargets(ctx) {
+		arches = append(arches, target.Arch.ArchType)
+	}
+
+	// filter out packaging specs for unsupported architecture
+	filterArch := func(ps PackagingSpec) bool {
+		for _, arch := range arches {
+			if arch == ps.archType {
+				return true
+			}
+		}
+		return false
+	}
+
 	ctx.VisitDirectDeps(func(child Module) {
 		if pi, ok := ctx.OtherModuleDependencyTag(child).(PackagingItem); !ok || !pi.IsPackagingItem() {
 			return
 		}
 		for _, ps := range child.TransitivePackagingSpecs() {
+			if !filterArch(ps) {
+				continue
+			}
+
 			if filter != nil {
 				if !filter(ps) {
 					continue
 				}
 			}
-			if _, ok := m[ps.relPathInPackage]; !ok {
-				m[ps.relPathInPackage] = ps
+			dstPath := ps.relPathInPackage
+			if existingPs, ok := m[dstPath]; ok {
+				if !existingPs.Equals(&ps) {
+					ctx.ModuleErrorf("packaging conflict at %v:\n%v\n%v", dstPath, existingPs, ps)
+				}
+				continue
 			}
+
+			m[dstPath] = ps
 		}
 	})
 	return m

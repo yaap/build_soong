@@ -159,12 +159,6 @@ func CheckProdCreds(ctx Context, config Config) {
 		fmt.Fprintln(ctx.Writer, "")
 		return
 	}
-	if config.GoogleProdCredsExist() {
-		return
-	}
-	fmt.Fprintln(ctx.Writer, "")
-	fmt.Fprintln(ctx.Writer, "\033[33mWARNING: Missing LOAS credentials, please run `gcert`. This will result in failing builds in the future, see go/rbe-android-default-announcement.\033[0m")
-	fmt.Fprintln(ctx.Writer, "")
 }
 
 // DumpRBEMetrics creates a metrics protobuf file containing RBE related metrics.

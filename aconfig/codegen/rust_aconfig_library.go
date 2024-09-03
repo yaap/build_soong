@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"strconv"
 
 	"android/soong/android"
 	"android/soong/rust"
@@ -82,16 +83,29 @@ func (a *aconfigDecorator) GenerateSource(ctx rust.ModuleContext, deps rust.Path
 		Args: map[string]string{
 			"gendir": generatedDir.String(),
 			"mode":   mode,
+			"debug":  strconv.FormatBool(ctx.Config().ReleaseReadFromNewStorage()),
 		},
 	})
 	a.BaseSourceProvider.OutputFiles = android.Paths{generatedSource}
+
+	android.SetProvider(ctx, android.CodegenInfoProvider, android.CodegenInfo{
+		ModeInfos: map[string]android.ModeInfo{
+			ctx.ModuleName(): {
+				Container: declarations.Container,
+				Mode:      mode,
+			}},
+	})
+
 	return generatedSource
 }
 
 func (a *aconfigDecorator) SourceProviderDeps(ctx rust.DepsContext, deps rust.Deps) rust.Deps {
 	deps = a.BaseSourceProvider.SourceProviderDeps(ctx, deps)
+	deps.Rustlibs = append(deps.Rustlibs, "libaconfig_storage_read_api")
 	deps.Rustlibs = append(deps.Rustlibs, "libflags_rust")
 	deps.Rustlibs = append(deps.Rustlibs, "liblazy_static")
+	deps.Rustlibs = append(deps.Rustlibs, "liblogger")
+	deps.Rustlibs = append(deps.Rustlibs, "liblog_rust")
 	ctx.AddDependency(ctx.Module(), rustDeclarationsTag, a.Properties.Aconfig_declarations)
 	return deps
 }

@@ -1428,7 +1428,7 @@ func deferReportingMissingBootDexJar(ctx android.ModuleContext, module android.M
 		// should not contribute to anything. So, rather than have a missing dex jar cause a Soong
 		// failure defer the error reporting to Ninja. Unless the prebuilt build target is explicitly
 		// built Ninja should never use the dex jar file.
-		if !isActiveModule(module) {
+		if !isActiveModule(ctx, module) {
 			return true
 		}
 
@@ -1477,14 +1477,4 @@ func retrieveEncodedBootDexJarFromModule(ctx android.ModuleContext, module andro
 		return fake
 	}
 	return bootDexJar.Path()
-}
-
-// extractEncodedDexJarsFromModules extracts the encoded dex jars from the supplied modules.
-func extractEncodedDexJarsFromModules(ctx android.ModuleContext, contents []android.Module) bootDexJarByModule {
-	encodedDexJarsByModuleName := bootDexJarByModule{}
-	for _, module := range contents {
-		path := retrieveEncodedBootDexJarFromModule(ctx, module)
-		encodedDexJarsByModuleName.addPath(module, path)
-	}
-	return encodedDexJarsByModuleName
 }

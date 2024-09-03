@@ -29,8 +29,8 @@ var (
 type lsdumpTag string
 
 const (
+	apexLsdumpTag     lsdumpTag = "APEX"
 	llndkLsdumpTag    lsdumpTag = "LLNDK"
-	ndkLsdumpTag      lsdumpTag = "NDK"
 	platformLsdumpTag lsdumpTag = "PLATFORM"
 	productLsdumpTag  lsdumpTag = "PRODUCT"
 	vendorLsdumpTag   lsdumpTag = "VENDOR"
@@ -39,12 +39,10 @@ const (
 // Return the prebuilt ABI dump directory for a tag; an empty string for an opt-in dump.
 func (tag *lsdumpTag) dirName() string {
 	switch *tag {
-	case ndkLsdumpTag:
-		return "ndk"
+	case apexLsdumpTag:
+		return "platform"
 	case llndkLsdumpTag:
 		return "vndk"
-	case platformLsdumpTag:
-		return "platform"
 	default:
 		return ""
 	}
@@ -92,7 +90,8 @@ type SAbiProperties struct {
 
 	// Include directories that may contain ABI information exported by a library.
 	// These directories are passed to the header-abi-dumper.
-	ReexportedIncludes []string `blueprint:"mutated"`
+	ReexportedIncludes       []string `blueprint:"mutated"`
+	ReexportedSystemIncludes []string `blueprint:"mutated"`
 }
 
 type sabi struct {
@@ -133,11 +132,10 @@ func classifySourceAbiDump(ctx android.BaseModuleContext) []lsdumpTag {
 		if m.isImplementationForLLNDKPublic() {
 			result = append(result, llndkLsdumpTag)
 		}
-		// Return NDK if the library is both NDK and APEX.
-		// TODO(b/309880485): Split NDK and APEX ABI.
-		if m.IsNdk(ctx.Config()) {
-			result = append(result, ndkLsdumpTag)
-		} else if m.library.hasStubsVariants() || headerAbiChecker.enabled() {
+		if m.library.hasStubsVariants() {
+			result = append(result, apexLsdumpTag)
+		}
+		if headerAbiChecker.enabled() {
 			result = append(result, platformLsdumpTag)
 		}
 	} else if headerAbiChecker.enabled() {

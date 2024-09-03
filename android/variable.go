@@ -20,8 +20,6 @@ import (
 	"runtime"
 	"strings"
 
-	"android/soong/bazel"
-
 	"github.com/google/blueprint/proptools"
 )
 
@@ -57,16 +55,20 @@ type variableProperties struct {
 			Base_dir *string
 		}
 
+		Shipping_api_level struct {
+			Cflags []string
+		}
+
 		// unbundled_build is a catch-all property to annotate modules that don't build in one or
 		// more unbundled branches, usually due to dependencies missing from the manifest.
 		Unbundled_build struct {
-			Enabled *bool `android:"arch_variant"`
+			Enabled proptools.Configurable[bool] `android:"arch_variant,replace_instead_of_append"`
 		} `android:"arch_variant"`
 
 		// similar to `Unbundled_build`, but `Always_use_prebuilt_sdks` means that it uses prebuilt
 		// sdk specifically.
 		Always_use_prebuilt_sdks struct {
-			Enabled *bool `android:"arch_variant"`
+			Enabled proptools.Configurable[bool] `android:"arch_variant,replace_instead_of_append"`
 		} `android:"arch_variant"`
 
 		Malloc_use_scudo struct {
@@ -87,7 +89,7 @@ type variableProperties struct {
 			Header_libs         []string `android:"arch_variant"`
 		} `android:"arch_variant"`
 
-		Malloc_not_svelte struct {
+		Malloc_low_memory struct {
 			Cflags              []string `android:"arch_variant"`
 			Shared_libs         []string `android:"arch_variant"`
 			Whole_static_libs   []string `android:"arch_variant"`
@@ -157,6 +159,8 @@ type variableProperties struct {
 			Srcs         []string
 			Exclude_srcs []string
 			Cmd          *string
+
+			Deps []string
 		}
 
 		// eng is true for -eng builds, and can be used to turn on additional heavyweight debugging
@@ -201,6 +205,7 @@ type variableProperties struct {
 		Release_aidl_use_unfrozen struct {
 			Cflags          []string
 			Cmd             *string
+			Required        []string
 			Vintf_fragments []string
 		}
 	} `android:"arch_variant"`
@@ -212,26 +217,28 @@ type ProductVariables struct {
 	// Suffix to add to generated Makefiles
 	Make_suffix *string `json:",omitempty"`
 
-	BuildId         *string `json:",omitempty"`
-	BuildNumberFile *string `json:",omitempty"`
+	BuildId             *string `json:",omitempty"`
+	BuildNumberFile     *string `json:",omitempty"`
+	BuildHostnameFile   *string `json:",omitempty"`
+	BuildThumbprintFile *string `json:",omitempty"`
+	DisplayBuildNumber  *bool   `json:",omitempty"`
 
-	Platform_version_name                     *string  `json:",omitempty"`
-	Platform_sdk_version                      *int     `json:",omitempty"`
-	Platform_sdk_codename                     *string  `json:",omitempty"`
-	Platform_sdk_version_or_codename          *string  `json:",omitempty"`
-	Platform_sdk_final                        *bool    `json:",omitempty"`
-	Platform_sdk_extension_version            *int     `json:",omitempty"`
-	Platform_base_sdk_extension_version       *int     `json:",omitempty"`
-	Platform_version_active_codenames         []string `json:",omitempty"`
-	Platform_version_all_preview_codenames    []string `json:",omitempty"`
-	Platform_vndk_version                     *string  `json:",omitempty"`
-	Platform_systemsdk_versions               []string `json:",omitempty"`
-	Platform_security_patch                   *string  `json:",omitempty"`
-	Platform_preview_sdk_version              *string  `json:",omitempty"`
-	Platform_min_supported_target_sdk_version *string  `json:",omitempty"`
-	Platform_base_os                          *string  `json:",omitempty"`
-	Platform_version_last_stable              *string  `json:",omitempty"`
-	Platform_version_known_codenames          *string  `json:",omitempty"`
+	Platform_display_version_name          *string  `json:",omitempty"`
+	Platform_version_name                  *string  `json:",omitempty"`
+	Platform_sdk_version                   *int     `json:",omitempty"`
+	Platform_sdk_codename                  *string  `json:",omitempty"`
+	Platform_sdk_version_or_codename       *string  `json:",omitempty"`
+	Platform_sdk_final                     *bool    `json:",omitempty"`
+	Platform_sdk_extension_version         *int     `json:",omitempty"`
+	Platform_base_sdk_extension_version    *int     `json:",omitempty"`
+	Platform_version_active_codenames      []string `json:",omitempty"`
+	Platform_version_all_preview_codenames []string `json:",omitempty"`
+	Platform_systemsdk_versions            []string `json:",omitempty"`
+	Platform_security_patch                *string  `json:",omitempty"`
+	Platform_preview_sdk_version           *string  `json:",omitempty"`
+	Platform_base_os                       *string  `json:",omitempty"`
+	Platform_version_last_stable           *string  `json:",omitempty"`
+	Platform_version_known_codenames       *string  `json:",omitempty"`
 
 	DeviceName                            *string  `json:",omitempty"`
 	DeviceProduct                         *string  `json:",omitempty"`
@@ -297,7 +304,7 @@ type ProductVariables struct {
 	Skip_boot_jars_check         *bool    `json:",omitempty"`
 	Malloc_use_scudo             *bool    `json:",omitempty"`
 	Malloc_use_mimalloc          *bool    `json:",omitempty"`
-	Malloc_not_svelte            *bool    `json:",omitempty"`
+	Malloc_low_memory            *bool    `json:",omitempty"`
 	Malloc_zero_contents         *bool    `json:",omitempty"`
 	Malloc_pattern_fill_contents *bool    `json:",omitempty"`
 	Safestack                    *bool    `json:",omitempty"`
@@ -316,6 +323,8 @@ type ProductVariables struct {
 	Arc                          *bool    `json:",omitempty"`
 	MinimizeJavaDebugInfo        *bool    `json:",omitempty"`
 	Build_from_text_stub         *bool    `json:",omitempty"`
+
+	BuildType *string `json:",omitempty"`
 
 	Check_elf_files *bool `json:",omitempty"`
 
@@ -379,7 +388,6 @@ type ProductVariables struct {
 
 	PgoAdditionalProfileDirs []string `json:",omitempty"`
 
-	VndkUseCoreVariant         *bool `json:",omitempty"`
 	VndkSnapshotBuildArtifacts *bool `json:",omitempty"`
 
 	DirectedVendorSnapshot bool            `json:",omitempty"`
@@ -456,7 +464,7 @@ type ProductVariables struct {
 
 	PrebuiltHiddenApiDir *string `json:",omitempty"`
 
-	ShippingApiLevel *string `json:",omitempty"`
+	Shipping_api_level *string `json:",omitempty"`
 
 	BuildBrokenPluginValidation         []string `json:",omitempty"`
 	BuildBrokenClangAsFlags             bool     `json:",omitempty"`
@@ -488,14 +496,12 @@ type ProductVariables struct {
 
 	IgnorePrefer32OnDevice bool `json:",omitempty"`
 
-	IncludeTags    []string `json:",omitempty"`
 	SourceRootDirs []string `json:",omitempty"`
 
 	AfdoProfiles []string `json:",omitempty"`
 
-	ProductManufacturer string   `json:",omitempty"`
-	ProductBrand        string   `json:",omitempty"`
-	BuildVersionTags    []string `json:",omitempty"`
+	ProductManufacturer string `json:",omitempty"`
+	ProductBrand        string `json:",omitempty"`
 
 	ReleaseVersion          string   `json:",omitempty"`
 	ReleaseAconfigValueSets []string `json:",omitempty"`
@@ -504,23 +510,29 @@ type ProductVariables struct {
 
 	ReleaseDefaultModuleBuildFromSource *bool `json:",omitempty"`
 
-	KeepVndk *bool `json:",omitempty"`
-
 	CheckVendorSeappViolations *bool `json:",omitempty"`
-
-	// PartitionVarsForBazelMigrationOnlyDoNotUse are extra variables that are used to define the
-	// partition images. They should not be read from soong modules.
-	PartitionVarsForBazelMigrationOnlyDoNotUse PartitionVariables `json:",omitempty"`
 
 	BuildFlags map[string]string `json:",omitempty"`
 
+	BuildFlagTypes map[string]string `json:",omitempty"`
+
 	BuildFromSourceStub *bool `json:",omitempty"`
 
-	BuildIgnoreApexContributionContents []string `json:",omitempty"`
+	BuildIgnoreApexContributionContents *bool `json:",omitempty"`
 
 	HiddenapiExportableStubs *bool `json:",omitempty"`
 
 	ExportRuntimeApis *bool `json:",omitempty"`
+
+	AconfigContainerValidation string `json:",omitempty"`
+
+	ProductLocales []string `json:",omitempty"`
+
+	ProductDefaultWifiChannels []string `json:",omitempty"`
+
+	BoardUseVbmetaDigestInFingerprint *bool `json:",omitempty"`
+
+	OemProperties []string `json:",omitempty"`
 }
 
 type PartitionQualifiedVariablesType struct {
@@ -603,7 +615,6 @@ func (v *ProductVariables) SetDefaultConfig() {
 		Platform_sdk_final:                     boolPtr(false),
 		Platform_version_active_codenames:      []string{"S"},
 		Platform_version_all_preview_codenames: []string{"S"},
-		Platform_vndk_version:                  stringPtr("S"),
 
 		HostArch:                    stringPtr("x86_64"),
 		HostSecondaryArch:           stringPtr("x86"),
@@ -627,7 +638,7 @@ func (v *ProductVariables) SetDefaultConfig() {
 
 		Malloc_use_scudo:             boolPtr(false),
 		Malloc_use_mimalloc:          boolPtr(false),
-		Malloc_not_svelte:            boolPtr(true),
+		Malloc_low_memory:            boolPtr(false),
 		Malloc_zero_contents:         boolPtr(true),
 		Malloc_pattern_fill_contents: boolPtr(false),
 		Safestack:                    boolPtr(false),
@@ -651,387 +662,6 @@ func (this *ProductVariables) GetBuildFlagBool(flag string) bool {
 		return false
 	}
 	return val == "true"
-}
-
-// ProductConfigContext requires the access to the Module to get product config properties.
-type ProductConfigContext interface {
-	Module() Module
-}
-
-// ProductConfigOrSoongConfigProperty represents either a soong config variable + its value
-// or a product config variable. You can get both a ConfigurationAxis and a SelectKey from it
-// for use in bazel attributes. ProductVariableProperties() will return a map from properties ->
-// this interface -> property structs for use in bp2build converters
-type ProductConfigOrSoongConfigProperty interface {
-	// Name of the product variable or soong config variable
-	Name() string
-	// AlwaysEmit returns true for soong config variables but false for product variables. This
-	// is intended to indicate if we need to always emit empty lists in the select statements.
-	AlwaysEmit() bool
-	// ConfigurationAxis returns the bazel.ConfigurationAxis that represents this variable. The
-	// configuration axis will change depending on the variable and whether it's arch/os variant
-	// as well.
-	ConfigurationAxis() bazel.ConfigurationAxis
-	// SelectKey returns a string that represents the key of a select branch, however, it is not
-	// actually the real label written out to the build file.
-	// this.ConfigurationAxis().SelectKey(this.SelectKey()) will give the actual label.
-	SelectKey() string
-}
-
-// ProductConfigProperty represents a product config variable, and if it is arch-variant or not.
-type ProductConfigProperty struct {
-	// The name of the product variable, e.g. "safestack", "malloc_not_svelte",
-	// "board"
-	name string
-
-	arch string
-}
-
-func (p ProductConfigProperty) Name() string {
-	return p.name
-}
-
-func (p ProductConfigProperty) AlwaysEmit() bool {
-	return false
-}
-
-func (p ProductConfigProperty) ConfigurationAxis() bazel.ConfigurationAxis {
-	return bazel.ProductVariableConfigurationAxis(p.arch != "", p.name+"__"+p.arch)
-}
-
-func (p ProductConfigProperty) SelectKey() string {
-	if p.arch == "" {
-		return strings.ToLower(p.name)
-	} else {
-		return strings.ToLower(p.name + "-" + p.arch)
-	}
-}
-
-// SoongConfigProperty represents a soong config variable, its value if it's a string variable,
-// and if it's dependent on the OS or not
-type SoongConfigProperty struct {
-	name      string
-	namespace string
-	// Can be an empty string for bool/value soong config variables
-	value string
-	// If there is a target: field inside a soong config property struct, the os that it selects
-	// on will be represented here.
-	os string
-}
-
-func (p SoongConfigProperty) Name() string {
-	return p.name
-}
-
-func (p SoongConfigProperty) AlwaysEmit() bool {
-	return true
-}
-
-func (p SoongConfigProperty) ConfigurationAxis() bazel.ConfigurationAxis {
-	return bazel.ProductVariableConfigurationAxis(false, p.namespace+"__"+p.name+"__"+p.os)
-}
-
-// SelectKey returns the literal string that represents this variable in a BUILD
-// select statement.
-func (p SoongConfigProperty) SelectKey() string {
-	// p.value being conditions_default can happen with or without a desired os. When not using
-	// an os, we want to emit literally just //conditions:default in the select statement, but
-	// when using an os, we want to emit namespace__name__conditions_default__os, so that
-	// the branch is only taken if the variable is not set, and we're on the desired os.
-	// ConfigurationAxis#SelectKey will map the conditions_default result of this function to
-	// //conditions:default.
-	if p.value == bazel.ConditionsDefaultConfigKey && p.os == "" {
-		return bazel.ConditionsDefaultConfigKey
-	}
-
-	parts := []string{p.namespace, p.name}
-	if p.value != "" && p.value != bazel.ConditionsDefaultSelectKey {
-		parts = append(parts, p.value)
-	}
-	if p.os != "" {
-		parts = append(parts, p.os)
-	}
-
-	// e.g. acme__feature1, android__board__soc_a, my_namespace__my_variables__my_value__my_os
-	return strings.ToLower(strings.Join(parts, "__"))
-}
-
-// ProductConfigProperties is a map of maps to group property values according
-// their property name and the product config variable they're set under.
-//
-// The outer map key is the name of the property, like "cflags".
-//
-// The inner map key is a ProductConfigProperty, which is a struct of product
-// variable name, namespace, and the "full configuration" of the product
-// variable.
-//
-// e.g. product variable name: board, namespace: acme, full config: vendor_chip_foo
-//
-// The value of the map is the interface{} representing the value of the
-// property, like ["-DDEFINES"] for cflags.
-type ProductConfigProperties map[string]map[ProductConfigOrSoongConfigProperty]interface{}
-
-func (p *ProductConfigProperties) AddProductConfigProperty(
-	propertyName, productVariableName, arch string, propertyValue interface{}) {
-
-	productConfigProp := ProductConfigProperty{
-		name: productVariableName, // e.g. size, feature1, feature2, FEATURE3, board
-		arch: arch,                // e.g. "", x86, arm64
-	}
-
-	p.AddEitherProperty(propertyName, productConfigProp, propertyValue)
-}
-
-func (p *ProductConfigProperties) AddSoongConfigProperty(
-	propertyName, namespace, variableName, value, os string, propertyValue interface{}) {
-
-	soongConfigProp := SoongConfigProperty{
-		namespace: namespace,
-		name:      variableName, // e.g. size, feature1, feature2, FEATURE3, board
-		value:     value,
-		os:        os, // e.g. android, linux_x86
-	}
-
-	p.AddEitherProperty(propertyName, soongConfigProp, propertyValue)
-}
-
-func (p *ProductConfigProperties) AddEitherProperty(
-	propertyName string, key ProductConfigOrSoongConfigProperty, propertyValue interface{}) {
-	if (*p)[propertyName] == nil {
-		(*p)[propertyName] = make(map[ProductConfigOrSoongConfigProperty]interface{})
-	}
-
-	if existing, ok := (*p)[propertyName][key]; ok {
-		switch dst := existing.(type) {
-		case []string:
-			src, ok := propertyValue.([]string)
-			if !ok {
-				panic("Conflicting types")
-			}
-			dst = append(dst, src...)
-			(*p)[propertyName][key] = dst
-		default:
-			if existing != propertyValue {
-				panic(fmt.Errorf("TODO: handle merging value %#v", existing))
-			}
-		}
-	} else {
-		(*p)[propertyName][key] = propertyValue
-	}
-}
-
-// maybeExtractConfigVarProp attempts to read this value as a config var struct
-// wrapped by interfaces and ptrs. If it's not the right type, the second return
-// value is false.
-func maybeExtractConfigVarProp(v reflect.Value) (reflect.Value, bool) {
-	if v.Kind() == reflect.Interface {
-		// The conditions_default value can be either
-		// 1) an ptr to an interface of a struct (bool config variables and product variables)
-		// 2) an interface of 1) (config variables with nested structs, like string vars)
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Ptr {
-		return v, false
-	}
-	v = reflect.Indirect(v)
-	if v.Kind() == reflect.Interface {
-		// Extract the struct from the interface
-		v = v.Elem()
-	}
-
-	if !v.IsValid() {
-		return v, false
-	}
-
-	if v.Kind() != reflect.Struct {
-		return v, false
-	}
-	return v, true
-}
-
-func (productConfigProperties *ProductConfigProperties) AddProductConfigProperties(variableValues reflect.Value, arch string) {
-	// Example of product_variables:
-	//
-	// product_variables: {
-	//     malloc_not_svelte: {
-	//         shared_libs: ["malloc_not_svelte_shared_lib"],
-	//         whole_static_libs: ["malloc_not_svelte_whole_static_lib"],
-	//         exclude_static_libs: [
-	//             "malloc_not_svelte_static_lib_excludes",
-	//             "malloc_not_svelte_whole_static_lib_excludes",
-	//         ],
-	//     },
-	// },
-
-	for i := 0; i < variableValues.NumField(); i++ {
-		// e.g. Platform_sdk_version, Unbundled_build, Malloc_not_svelte, etc.
-		productVariableName := variableValues.Type().Field(i).Name
-
-		variableValue := variableValues.Field(i)
-		// Check if any properties were set for the module
-		if variableValue.IsZero() {
-			// e.g. feature1: {}, malloc_not_svelte: {}
-			continue
-		}
-
-		for j := 0; j < variableValue.NumField(); j++ {
-			property := variableValue.Field(j)
-			// e.g. Asflags, Cflags, Enabled, etc.
-			propertyName := variableValue.Type().Field(j).Name
-			if property.Kind() != reflect.Interface {
-				productConfigProperties.AddProductConfigProperty(propertyName, productVariableName, arch, property.Interface())
-			}
-		}
-	}
-
-}
-
-func (productConfigProperties *ProductConfigProperties) AddSoongConfigProperties(namespace string, soongConfigVariablesStruct reflect.Value) error {
-	//
-	// Example of soong_config_variables:
-	//
-	// soong_config_variables: {
-	//      feature1: {
-	//          conditions_default: {
-	//               ...
-	//          },
-	//          cflags: ...
-	//      },
-	//      feature2: {
-	//          cflags: ...
-	//          conditions_default: {
-	//               ...
-	//          },
-	//      },
-	//      board: {
-	//         soc_a: {
-	//             ...
-	//         },
-	//         soc_b: {
-	//             ...
-	//         },
-	//         soc_c: {},
-	//         conditions_default: {
-	//              ...
-	//         },
-	//      },
-	// }
-	for i := 0; i < soongConfigVariablesStruct.NumField(); i++ {
-		// e.g. feature1, feature2, board
-		variableName := soongConfigVariablesStruct.Type().Field(i).Name
-		variableStruct := soongConfigVariablesStruct.Field(i)
-		// Check if any properties were set for the module
-		if variableStruct.IsZero() {
-			// e.g. feature1: {}
-			continue
-		}
-
-		// Unlike product variables, config variables require a few more
-		// indirections to extract the struct from the reflect.Value.
-		if v, ok := maybeExtractConfigVarProp(variableStruct); ok {
-			variableStruct = v
-		} else if !v.IsValid() {
-			// Skip invalid variables which may not used, else leads to panic
-			continue
-		}
-
-		for j := 0; j < variableStruct.NumField(); j++ {
-			propertyOrStruct := variableStruct.Field(j)
-			// propertyOrValueName can either be:
-			//  - A property, like: Asflags, Cflags, Enabled, etc.
-			//  - A soong config string variable's value, like soc_a, soc_b, soc_c in the example above
-			//  - "conditions_default"
-			propertyOrValueName := variableStruct.Type().Field(j).Name
-
-			// If the property wasn't set, no need to pass it along
-			if propertyOrStruct.IsZero() {
-				continue
-			}
-
-			if v, ok := maybeExtractConfigVarProp(propertyOrStruct); ok {
-				// The field is a struct, which is used by:
-				// 1) soong_config_string_variables
-				//
-				// soc_a: {
-				//     cflags: ...,
-				// }
-				//
-				// soc_b: {
-				//     cflags: ...,
-				// }
-				//
-				// 2) conditions_default structs for all soong config variable types.
-				//
-				// conditions_default: {
-				//     cflags: ...,
-				//     static_libs: ...
-				// }
-				//
-				// This means that propertyOrValueName is either conditions_default, or a soong
-				// config string variable's value.
-				field := v
-				// Iterate over fields of this struct prop.
-				for k := 0; k < field.NumField(); k++ {
-					// For product variables, zero values are irrelevant; however, for soong config variables,
-					// empty values are relevant because there can also be a conditions default which is not
-					// applied for empty variables.
-					if field.Field(k).IsZero() && namespace == "" {
-						continue
-					}
-
-					propertyName := field.Type().Field(k).Name
-					if propertyName == "Target" {
-						productConfigProperties.AddSoongConfigPropertiesFromTargetStruct(namespace, variableName, proptools.PropertyNameForField(propertyOrValueName), field.Field(k))
-					} else if propertyName == "Arch" || propertyName == "Multilib" {
-						return fmt.Errorf("Arch/Multilib are not currently supported in soong config variable structs")
-					} else {
-						productConfigProperties.AddSoongConfigProperty(propertyName, namespace, variableName, proptools.PropertyNameForField(propertyOrValueName), "", field.Field(k).Interface())
-					}
-				}
-			} else if propertyOrStruct.Kind() != reflect.Interface {
-				// If not an interface, then this is not a conditions_default or
-				// a struct prop. That is, this is a bool/value config variable.
-				if propertyOrValueName == "Target" {
-					productConfigProperties.AddSoongConfigPropertiesFromTargetStruct(namespace, variableName, "", propertyOrStruct)
-				} else if propertyOrValueName == "Arch" || propertyOrValueName == "Multilib" {
-					return fmt.Errorf("Arch/Multilib are not currently supported in soong config variable structs")
-				} else {
-					productConfigProperties.AddSoongConfigProperty(propertyOrValueName, namespace, variableName, "", "", propertyOrStruct.Interface())
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (productConfigProperties *ProductConfigProperties) AddSoongConfigPropertiesFromTargetStruct(namespace, soongConfigVariableName string, soongConfigVariableValue string, targetStruct reflect.Value) {
-	// targetStruct will be a struct with fields like "android", "host", "arm", "x86",
-	// "android_arm", etc. The values of each of those fields will be a regular property struct.
-	for i := 0; i < targetStruct.NumField(); i++ {
-		targetFieldName := targetStruct.Type().Field(i).Name
-		archOrOsSpecificStruct := targetStruct.Field(i)
-		for j := 0; j < archOrOsSpecificStruct.NumField(); j++ {
-			property := archOrOsSpecificStruct.Field(j)
-			// e.g. Asflags, Cflags, Enabled, etc.
-			propertyName := archOrOsSpecificStruct.Type().Field(j).Name
-
-			if targetFieldName == "Android" {
-				productConfigProperties.AddSoongConfigProperty(propertyName, namespace, soongConfigVariableName, soongConfigVariableValue, "android", property.Interface())
-			} else if targetFieldName == "Host" {
-				for _, os := range osTypeList {
-					if os.Class == Host {
-						productConfigProperties.AddSoongConfigProperty(propertyName, namespace, soongConfigVariableName, soongConfigVariableValue, os.Name, property.Interface())
-					}
-				}
-			} else if !archOrOsSpecificStruct.IsZero() {
-				// One problem with supporting additional fields is that if multiple branches of
-				// "target" overlap, we don't want them to be in the same select statement (aka
-				// configuration axis). "android" and "host" are disjoint, so it's ok that we only
-				// have 2 axes right now. (soongConfigVariables and soongConfigVariablesPlusOs)
-				panic("TODO: support other target types in soong config variable structs: " + targetFieldName)
-			}
-		}
-	}
 }
 
 func VariableMutator(mctx BottomUpMutatorContext) {

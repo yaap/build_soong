@@ -19,7 +19,6 @@ import (
 
 	"android/soong/android"
 	"android/soong/genrule"
-	"android/soong/snapshot"
 )
 
 func init() {
@@ -63,6 +62,8 @@ func GenRuleFactory() android.Module {
 
 	android.InitApexModule(module)
 
+	android.InitDefaultableModule(module)
+
 	return module
 }
 
@@ -97,47 +98,23 @@ func (g *GenruleExtraProperties) DebugRamdiskVariantNeeded(ctx android.BaseModul
 func (g *GenruleExtraProperties) RecoveryVariantNeeded(ctx android.BaseModuleContext) bool {
 	// If the build is using a snapshot, the recovery variant under AOSP directories
 	// is not needed.
-	recoverySnapshotVersion := ctx.DeviceConfig().RecoverySnapshotVersion()
-	if recoverySnapshotVersion != "current" && recoverySnapshotVersion != "" &&
-		!snapshot.IsRecoveryProprietaryModule(ctx) {
-		return false
-	} else {
-		return Bool(g.Recovery_available)
-	}
+	return Bool(g.Recovery_available)
 }
 
 func (g *GenruleExtraProperties) ExtraImageVariations(ctx android.BaseModuleContext) []string {
 	var variants []string
-	vndkVersion := ctx.DeviceConfig().VndkVersion()
 	vendorVariantRequired := Bool(g.Vendor_available) || Bool(g.Odm_available) || ctx.SocSpecific() || ctx.DeviceSpecific()
 	productVariantRequired := Bool(g.Product_available) || ctx.ProductSpecific()
 
-	if vndkVersion == "" {
-		if vendorVariantRequired {
-			variants = append(variants, VendorVariation)
-		}
-		if productVariantRequired {
-			variants = append(variants, ProductVariation)
-		}
-	} else {
-		if vendorVariantRequired {
-			// If vndkVersion is current, we can always use PlatformVndkVersion.
-			// If not, we assume modules under proprietary paths are compatible for
-			// BOARD_VNDK_VERSION. The other modules are regarded as AOSP, that is
-			// PLATFORM_VNDK_VERSION.
-			if vndkVersion == "current" || !snapshot.IsVendorProprietaryModule(ctx) {
-				variants = append(variants, VendorVariationPrefix+ctx.DeviceConfig().PlatformVndkVersion())
-			} else {
-				variants = append(variants, VendorVariationPrefix+vndkVersion)
-			}
-		}
-		if productVariantRequired {
-			variants = append(variants, ProductVariationPrefix+ctx.DeviceConfig().PlatformVndkVersion())
-		}
+	if vendorVariantRequired {
+		variants = append(variants, VendorVariation)
+	}
+	if productVariantRequired {
+		variants = append(variants, ProductVariation)
 	}
 
 	return variants
 }
 
-func (g *GenruleExtraProperties) SetImageVariation(ctx android.BaseModuleContext, variation string, module android.Module) {
+func (g *GenruleExtraProperties) SetImageVariation(ctx android.BaseModuleContext, variation string) {
 }

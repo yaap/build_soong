@@ -50,12 +50,28 @@ func testCCCodegenModeHelper(t *testing.T, bpMode string, ruleMode string) {
 			aconfig_declarations {
 				name: "my_aconfig_declarations",
 				package: "com.example.package",
+				container: "com.android.foo",
 				srcs: ["foo.aconfig"],
 			}
 
 			cc_library {
     		name: "server_configurable_flags",
     		srcs: ["server_configurable_flags.cc"],
+			}
+
+			cc_library {
+    		name: "libbase",
+    		srcs: ["libbase.cc"],
+			}
+
+			cc_library {
+    		name: "liblog",
+    		srcs: ["liblog.cc"],
+			}
+
+			cc_library {
+    		name: "libaconfig_storage_read_api_cc",
+    		srcs: ["libaconfig_storage_read_api_cc.cc"],
 			}
 
 			cc_aconfig_library {
@@ -92,12 +108,28 @@ func testIncorrectCCCodegenModeHelper(t *testing.T, bpMode string, err string) {
 			aconfig_declarations {
 				name: "my_aconfig_declarations",
 				package: "com.example.package",
+				container: "com.android.foo",
 				srcs: ["foo.aconfig"],
 			}
 
 			cc_library {
     		name: "server_configurable_flags",
     		srcs: ["server_configurable_flags.cc"],
+			}
+
+			cc_library {
+    		name: "libbase",
+    		srcs: ["libbase.cc"],
+			}
+
+			cc_library {
+    		name: "liblog",
+    		srcs: ["liblog.cc"],
+			}
+
+			cc_library {
+    		name: "libaconfig_storage_read_api_cc",
+    		srcs: ["libaconfig_storage_read_api_cc.cc"],
 			}
 
 			cc_aconfig_library {
@@ -126,6 +158,7 @@ func TestAndroidMkCcLibrary(t *testing.T) {
 		aconfig_declarations {
 			name: "my_aconfig_declarations_bar",
 			package: "com.example.package",
+			container: "com.android.foo",
 			srcs: ["bar.aconfig"],
 		}
 
@@ -152,6 +185,24 @@ func TestAndroidMkCcLibrary(t *testing.T) {
 			srcs: ["server_configurable_flags.cc"],
 			vendor_available: true,
 		}
+
+		cc_library {
+			name: "libbase",
+			srcs: ["libbase.cc"],
+			vendor_available: true,
+		}
+
+		cc_library {
+			name: "liblog",
+			srcs: ["liblog.cc"],
+			vendor_available: true,
+		}
+
+		cc_library {
+			name: "libaconfig_storage_read_api_cc",
+			srcs: ["libaconfig_storage_read_api_cc.cc"],
+			vendor_available: true,
+		}
 	`
 	result := android.GroupFixturePreparers(
 		PrepareForTestWithAconfigBuildComponents,
@@ -176,6 +227,7 @@ func TestForceReadOnly(t *testing.T) {
 			aconfig_declarations {
 				name: "my_aconfig_declarations",
 				package: "com.example.package",
+				container: "com.android.foo",
 				srcs: ["foo.aconfig"],
 			}
 
@@ -183,6 +235,22 @@ func TestForceReadOnly(t *testing.T) {
 				name: "my_cc_aconfig_library",
 				aconfig_declarations: "my_aconfig_declarations",
 				mode: "force-read-only",
+			}
+
+
+			cc_library {
+    		                name: "libbase",
+    		                srcs: ["libbase.cc"],
+			}
+
+			cc_library {
+    		                name: "liblog",
+    		                srcs: ["liblog.cc"],
+			}
+
+			cc_library {
+    		                name: "libaconfig_storage_read_api_cc",
+    		                srcs: ["libaconfig_storage_read_api_cc.cc"],
 			}
 		`))
 

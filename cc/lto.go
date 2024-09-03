@@ -56,7 +56,7 @@ type LTOProperties struct {
 	Whole_program_vtables *bool
 
 	// Use --lto-O0 flag.
-	Lto_O0 *bool
+	Lto_O0       *bool
 	Lto_Instr100 *bool
 }
 
@@ -94,10 +94,6 @@ func (lto *lto) begin(ctx BaseModuleContext) {
 	} else if ctx.testBinary() || ctx.testLibrary() {
 		// Do not enable LTO for tests for better debugging.
 		ltoEnabled = false
-	} else if ctx.isVndk() {
-		// FIXME: ThinLTO for VNDK produces different output.
-		// b/169217596
-		ltoEnabled = false
 	}
 
 	lto.Properties.LtoDefault = ltoDefault
@@ -119,7 +115,7 @@ func (lto *lto) flags(ctx ModuleContext, flags Flags) Flags {
 		if Bool(lto.Properties.Lto_O0) || ctx.Config().Eng() {
 			ltoLdFlags = append(ltoLdFlags, "-Wl,--lto-O0")
 		} else {
-			ltoLdFlags = append(ltoLdFlags,"-Wl,--lto-O3")
+			ltoLdFlags = append(ltoLdFlags, "-Wl,--lto-O3")
 			ltoCOnlyFlags = append(ltoCOnlyFlags, "-O3")
 		}
 		// Enable Polly globally
@@ -170,7 +166,7 @@ func (lto *lto) flags(ctx ModuleContext, flags Flags) Flags {
 
 		if !ctx.Config().IsEnvFalse("THINLTO_USE_MLGO") {
 			// Register allocation MLGO flags for ARM64.
-			if ctx.Arch().ArchType == android.Arm64 {
+			if ctx.Arch().ArchType == android.Arm64 && !ctx.optimizeForSize() {
 				ltoLdFlags = append(ltoLdFlags, "-Wl,-mllvm,-regalloc-enable-advisor=release")
 			}
 			// Flags for training MLGO model.

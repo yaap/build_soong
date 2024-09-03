@@ -15,9 +15,9 @@
 package codegen
 
 import (
-	"android/soong/aconfig"
+	"maps"
+
 	"android/soong/android"
-	"fmt"
 
 	"github.com/google/blueprint"
 )
@@ -39,10 +39,6 @@ type AconfigDeclarationsGroup struct {
 	android.DefaultableModuleBase
 
 	properties AconfigDeclarationsGroupProperties
-
-	aconfigDeclarationNames      []string
-	intermediateCacheOutputPaths android.Paths
-	javaSrcjars                  android.Paths
 }
 
 type AconfigDeclarationsGroupProperties struct {
@@ -75,55 +71,45 @@ func (adg *AconfigDeclarationsGroup) DepsMutator(ctx android.BottomUpMutatorCont
 	ctx.AddDependency(ctx.Module(), rustAconfigLibraryTag, adg.properties.Rust_aconfig_libraries...)
 }
 
-func (adg *AconfigDeclarationsGroup) VisitDeps(ctx android.ModuleContext) {
+func (adg *AconfigDeclarationsGroup) GenerateAndroidBuildActions(ctx android.ModuleContext) {
+	modeInfos := make(map[string]android.ModeInfo)
+	var aconfigDeclarationNames []string
+	var intermediateCacheOutputPaths android.Paths
+	var javaSrcjars android.Paths
 	ctx.VisitDirectDeps(func(dep android.Module) {
 		tag := ctx.OtherModuleDependencyTag(dep)
-		if provider, ok := android.OtherModuleProvider(ctx, dep, aconfig.CodegenInfoProvider); ok {
+		if provider, ok := android.OtherModuleProvider(ctx, dep, android.CodegenInfoProvider); ok {
 
 			// aconfig declaration names and cache files are collected for all aconfig library dependencies
-			adg.aconfigDeclarationNames = append(adg.aconfigDeclarationNames, provider.AconfigDeclarations...)
-			adg.intermediateCacheOutputPaths = append(adg.intermediateCacheOutputPaths, provider.IntermediateCacheOutputPaths...)
+			aconfigDeclarationNames = append(aconfigDeclarationNames, provider.AconfigDeclarations...)
+			intermediateCacheOutputPaths = append(intermediateCacheOutputPaths, provider.IntermediateCacheOutputPaths...)
 
 			switch tag {
 			case aconfigDeclarationsGroupTag:
 				// Will retrieve outputs from another language codegen modules when support is added
-				adg.javaSrcjars = append(adg.javaSrcjars, provider.Srcjars...)
+				javaSrcjars = append(javaSrcjars, provider.Srcjars...)
+				maps.Copy(modeInfos, provider.ModeInfos)
 			case javaAconfigLibraryTag:
-				adg.javaSrcjars = append(adg.javaSrcjars, provider.Srcjars...)
+				javaSrcjars = append(javaSrcjars, provider.Srcjars...)
+				maps.Copy(modeInfos, provider.ModeInfos)
+			case ccAconfigLibraryTag:
+				maps.Copy(modeInfos, provider.ModeInfos)
+			case rustAconfigLibraryTag:
+				maps.Copy(modeInfos, provider.ModeInfos)
 			}
 		}
 	})
-}
 
-func (adg *AconfigDeclarationsGroup) GenerateAndroidBuildActions(ctx android.ModuleContext) {
-	adg.VisitDeps(ctx)
-	adg.aconfigDeclarationNames = android.FirstUniqueStrings(adg.aconfigDeclarationNames)
-	adg.intermediateCacheOutputPaths = android.FirstUniquePaths(adg.intermediateCacheOutputPaths)
+	aconfigDeclarationNames = android.FirstUniqueStrings(aconfigDeclarationNames)
+	intermediateCacheOutputPaths = android.FirstUniquePaths(intermediateCacheOutputPaths)
 
-	android.SetProvider(ctx, aconfig.CodegenInfoProvider, aconfig.CodegenInfo{
-		AconfigDeclarations:          adg.aconfigDeclarationNames,
-		IntermediateCacheOutputPaths: adg.intermediateCacheOutputPaths,
-		Srcjars:                      adg.javaSrcjars,
+	android.SetProvider(ctx, android.CodegenInfoProvider, android.CodegenInfo{
+		AconfigDeclarations:          aconfigDeclarationNames,
+		IntermediateCacheOutputPaths: intermediateCacheOutputPaths,
+		Srcjars:                      javaSrcjars,
+		ModeInfos:                    modeInfos,
 	})
-}
 
-var _ android.OutputFileProducer = (*AconfigDeclarationsGroup)(nil)
-
-func (adg *AconfigDeclarationsGroup) OutputFiles(tag string) (android.Paths, error) {
-	switch tag {
-	case "":
-		return adg.intermediateCacheOutputPaths, nil
-	case ".srcjars":
-		return adg.javaSrcjars, nil
-	default:
-		return nil, fmt.Errorf("unsupported module reference tag %s", tag)
-	}
-}
-
-func (adg *AconfigDeclarationsGroup) Srcjars() android.Paths {
-	return adg.javaSrcjars
-}
-
-func (adg *AconfigDeclarationsGroup) AconfigDeclarations() []string {
-	return adg.aconfigDeclarationNames
+	ctx.SetOutputFiles(intermediateCacheOutputPaths, "")
+	ctx.SetOutputFiles(javaSrcjars, ".srcjars")
 }

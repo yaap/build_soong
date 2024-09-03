@@ -77,7 +77,7 @@ func (b bootclasspathFragmentContentDependencyTag) SdkMemberType(child android.M
 		return javaSdkLibrarySdkMemberType
 	}
 
-	return javaBootLibsSdkMemberType
+	return JavaBootLibsSdkMemberType
 }
 
 func (b bootclasspathFragmentContentDependencyTag) ExportMember() bool {
@@ -474,7 +474,7 @@ func (b *BootclasspathFragmentModule) GenerateAndroidBuildActions(ctx android.Mo
 	// Only perform a consistency check if this module is the active module. That will prevent an
 	// unused prebuilt that was created without instrumentation from breaking an instrumentation
 	// build.
-	if isActiveModule(ctx.Module()) {
+	if isActiveModule(ctx, ctx.Module()) {
 		b.bootclasspathFragmentPropertyCheck(ctx)
 	}
 
@@ -519,15 +519,21 @@ func (b *BootclasspathFragmentModule) GenerateAndroidBuildActions(ctx android.Mo
 // empty string if this module should not provide a boot image profile.
 func (b *BootclasspathFragmentModule) getProfileProviderApex(ctx android.BaseModuleContext) string {
 	// Only use the profile from the module that is preferred.
-	if !isActiveModule(ctx.Module()) {
+	if !isActiveModule(ctx, ctx.Module()) {
 		return ""
 	}
 
 	// Bootclasspath fragment modules that are for the platform do not produce boot related files.
-	apexInfo, _ := android.ModuleProvider(ctx, android.ApexInfoProvider)
-	for _, apex := range apexInfo.InApexVariants {
-		if isProfileProviderApex(ctx, apex) {
-			return apex
+	apexInfos, _ := android.ModuleProvider(ctx, android.AllApexInfoProvider)
+	if apexInfos == nil {
+		return ""
+	}
+
+	for _, apexInfo := range apexInfos.ApexInfos {
+		for _, apex := range apexInfo.InApexVariants {
+			if isProfileProviderApex(ctx, apex) {
+				return apex
+			}
 		}
 	}
 
@@ -590,11 +596,34 @@ func (b *BootclasspathFragmentModule) configuredJars(ctx android.ModuleContext) 
 		// So ignore it even if it is not in PRODUCT_APEX_BOOT_JARS.
 		// TODO(b/202896428): Add better way to handle this.
 		_, unknown = android.RemoveFromList("android.car-module", unknown)
-		if isActiveModule(ctx.Module()) && len(unknown) > 0 {
-			ctx.ModuleErrorf("%s in contents must also be declared in PRODUCT_APEX_BOOT_JARS", unknown)
+		if isApexVariant(ctx) && len(unknown) > 0 {
+			if android.IsModulePrebuilt(ctx.Module()) {
+				// prebuilt bcpf. the validation of this will be done at the top-level apex
+				providerClasspathFragmentValidationInfoProvider(ctx, unknown)
+			} else if !disableSourceApexVariant(ctx) {
+				// source bcpf, and prebuilt apex are not selected.
+				ctx.ModuleErrorf("%s in contents must also be declared in PRODUCT_APEX_BOOT_JARS", unknown)
+			}
 		}
 	}
 	return jars
+}
+
+var ClasspathFragmentValidationInfoProvider = blueprint.NewProvider[ClasspathFragmentValidationInfo]()
+
+type ClasspathFragmentValidationInfo struct {
+	ClasspathFragmentModuleName string
+	UnknownJars                 []string
+}
+
+// Set a provider with the list of jars that have not been added to PRODUCT_APEX_BOOT_JARS
+// The validation will be done in the ctx of the top-level _selected_ apex
+func providerClasspathFragmentValidationInfoProvider(ctx android.ModuleContext, unknown []string) {
+	info := ClasspathFragmentValidationInfo{
+		ClasspathFragmentModuleName: ctx.ModuleName(),
+		UnknownJars:                 unknown,
+	}
+	android.SetProvider(ctx, ClasspathFragmentValidationInfoProvider, info)
 }
 
 // generateHiddenAPIBuildActions generates all the hidden API related build rules.

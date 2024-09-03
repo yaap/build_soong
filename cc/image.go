@@ -17,12 +17,9 @@ package cc
 // functions to determine where a module is installed, etc.
 
 import (
-	"fmt"
-	"reflect"
 	"strings"
 
 	"android/soong/android"
-	"android/soong/snapshot"
 
 	"github.com/google/blueprint/proptools"
 )
@@ -158,52 +155,6 @@ func (c *Module) OnlyInRecovery() bool {
 	return c.ModuleBase.InstallInRecovery()
 }
 
-func visitPropsAndCompareVendorAndProductProps(v reflect.Value) bool {
-	if v.Kind() != reflect.Struct {
-		return true
-	}
-	for i := 0; i < v.NumField(); i++ {
-		prop := v.Field(i)
-		if prop.Kind() == reflect.Struct && v.Type().Field(i).Name == "Target" {
-			vendor_prop := prop.FieldByName("Vendor")
-			product_prop := prop.FieldByName("Product")
-			if vendor_prop.Kind() != reflect.Struct && product_prop.Kind() != reflect.Struct {
-				// Neither Target.Vendor nor Target.Product is defined
-				continue
-			}
-			if vendor_prop.Kind() != reflect.Struct || product_prop.Kind() != reflect.Struct ||
-				!reflect.DeepEqual(vendor_prop.Interface(), product_prop.Interface()) {
-				// If only one of either Target.Vendor or Target.Product is
-				// defined or they have different values, it fails the build
-				// since VNDK must have the same properties for both vendor
-				// and product variants.
-				return false
-			}
-		} else if !visitPropsAndCompareVendorAndProductProps(prop) {
-			// Visit the substructures to find Target.Vendor and Target.Product
-			return false
-		}
-	}
-	return true
-}
-
-// In the case of VNDK, vendor and product variants must have the same properties.
-// VNDK installs only one file and shares it for both vendor and product modules on
-// runtime. We may not define different versions of a VNDK lib for each partition.
-// This function is used only for the VNDK modules that is available to both vendor
-// and product partitions.
-func (c *Module) compareVendorAndProductProps() bool {
-	if !c.IsVndk() && !Bool(c.VendorProperties.Product_available) {
-		panic(fmt.Errorf("This is only for product available VNDK libs. %q is not a VNDK library or not product available", c.Name()))
-	}
-	for _, properties := range c.GetProperties() {
-		if !visitPropsAndCompareVendorAndProductProps(reflect.ValueOf(properties).Elem()) {
-			return false
-		}
-	}
-	return true
-}
-
 // ImageMutatableModule provides a common image mutation interface for  LinkableInterface modules.
 type ImageMutatableModule interface {
 	android.Module
@@ -261,60 +212,7 @@ type ImageMutatableModule interface {
 var _ ImageMutatableModule = (*Module)(nil)
 
 func (m *Module) ImageMutatorBegin(mctx android.BaseModuleContext) {
-	m.CheckVndkProperties(mctx)
 	MutateImage(mctx, m)
-}
-
-// CheckVndkProperties checks whether the VNDK-related properties are set correctly.
-// If properties are not set correctly, results in a module context property error.
-func (m *Module) CheckVndkProperties(mctx android.BaseModuleContext) {
-	vendorSpecific := mctx.SocSpecific() || mctx.DeviceSpecific()
-	productSpecific := mctx.ProductSpecific()
-
-	if vndkdep := m.vndkdep; vndkdep != nil {
-		if vndkdep.isVndk() {
-			if vendorSpecific || productSpecific {
-				if !vndkdep.isVndkExt() {
-					mctx.PropertyErrorf("vndk",
-						"must set `extends: \"...\"` to vndk extension")
-				} else if Bool(m.VendorProperties.Vendor_available) {
-					mctx.PropertyErrorf("vendor_available",
-						"must not set at the same time as `vndk: {extends: \"...\"}`")
-				} else if Bool(m.VendorProperties.Product_available) {
-					mctx.PropertyErrorf("product_available",
-						"must not set at the same time as `vndk: {extends: \"...\"}`")
-				}
-			} else {
-				if vndkdep.isVndkExt() {
-					mctx.PropertyErrorf("vndk",
-						"must set `vendor: true` or `product_specific: true` to set `extends: %q`",
-						m.getVndkExtendsModuleName())
-				}
-				if !Bool(m.VendorProperties.Vendor_available) {
-					mctx.PropertyErrorf("vndk",
-						"vendor_available must be set to true when `vndk: {enabled: true}`")
-				}
-				if Bool(m.VendorProperties.Product_available) {
-					// If a VNDK module creates both product and vendor variants, they
-					// must have the same properties since they share a single VNDK
-					// library on runtime.
-					if !m.compareVendorAndProductProps() {
-						mctx.ModuleErrorf("product properties must have the same values with the vendor properties for VNDK modules")
-					}
-				}
-			}
-		} else {
-			if vndkdep.isVndkSp() {
-				mctx.PropertyErrorf("vndk",
-					"must set `enabled: true` to set `support_system_process: true`")
-			}
-			if vndkdep.isVndkExt() {
-				mctx.PropertyErrorf("vndk",
-					"must set `enabled: true` to set `extends: %q`",
-					m.getVndkExtendsModuleName())
-			}
-		}
-	}
 }
 
 func (m *Module) VendorAvailable() bool {
@@ -429,43 +327,26 @@ func MutateImage(mctx android.BaseModuleContext, m ImageMutatableModule) {
 	var vendorVariants []string
 	var productVariants []string
 
-	platformVndkVersion := mctx.DeviceConfig().PlatformVndkVersion()
-	boardVndkVersion := mctx.DeviceConfig().VndkVersion()
-	recoverySnapshotVersion := mctx.DeviceConfig().RecoverySnapshotVersion()
-	usingRecoverySnapshot := recoverySnapshotVersion != "current" &&
-		recoverySnapshotVersion != ""
 	needVndkVersionVendorVariantForLlndk := false
-	if boardVndkVersion != "" {
-		boardVndkApiLevel, err := android.ApiLevelFromUser(mctx, boardVndkVersion)
-		if err == nil && !boardVndkApiLevel.IsPreview() {
-			// VNDK snapshot newer than v30 has LLNDK stub libraries.
-			// Only the VNDK version less than or equal to v30 requires generating the vendor
-			// variant of the VNDK version from the source tree.
-			needVndkVersionVendorVariantForLlndk = boardVndkApiLevel.LessThanOrEqualTo(android.ApiLevelOrPanic(mctx, "30"))
-		}
-	}
-	if boardVndkVersion == "current" {
-		boardVndkVersion = platformVndkVersion
-	}
 
 	if m.NeedsLlndkVariants() {
 		// This is an LLNDK library.  The implementation of the library will be on /system,
 		// and vendor and product variants will be created with LLNDK stubs.
 		// The LLNDK libraries need vendor variants even if there is no VNDK.
 		coreVariantNeeded = true
-		vendorVariants = append(vendorVariants, platformVndkVersion)
-		productVariants = append(productVariants, platformVndkVersion)
+		vendorVariants = append(vendorVariants, "")
+		productVariants = append(productVariants, "")
 		// Generate vendor variants for boardVndkVersion only if the VNDK snapshot does not
 		// provide the LLNDK stub libraries.
 		if needVndkVersionVendorVariantForLlndk {
-			vendorVariants = append(vendorVariants, boardVndkVersion)
+			vendorVariants = append(vendorVariants, "")
 		}
 	} else if m.NeedsVendorPublicLibraryVariants() {
 		// A vendor public library has the implementation on /vendor, with stub variants
 		// for system and product.
 		coreVariantNeeded = true
-		vendorVariants = append(vendorVariants, boardVndkVersion)
-		productVariants = append(productVariants, platformVndkVersion)
+		vendorVariants = append(vendorVariants, "")
+		productVariants = append(productVariants, "")
 	} else if m.IsSnapshotPrebuilt() {
 		// Make vendor variants only for the versions in BOARD_VNDK_VERSION and
 		// PRODUCT_EXTRA_VNDK_VERSIONS.
@@ -474,7 +355,7 @@ func MutateImage(mctx android.BaseModuleContext, m ImageMutatableModule) {
 		} else {
 			vendorVariants = append(vendorVariants, m.SnapshotVersion(mctx))
 		}
-	} else if m.HasNonSystemVariants() && !m.IsVndkExt() {
+	} else if m.HasNonSystemVariants() {
 		// This will be available to /system unless it is product_specific
 		// which will be handled later.
 		coreVariantNeeded = true
@@ -483,36 +364,16 @@ func MutateImage(mctx android.BaseModuleContext, m ImageMutatableModule) {
 		// BOARD_VNDK_VERSION. The other modules are regarded as AOSP, or
 		// PLATFORM_VNDK_VERSION.
 		if m.HasVendorVariant() {
-			if snapshot.IsVendorProprietaryModule(mctx) {
-				vendorVariants = append(vendorVariants, boardVndkVersion)
-			} else {
-				vendorVariants = append(vendorVariants, platformVndkVersion)
-			}
+			vendorVariants = append(vendorVariants, "")
 		}
 
 		// product_available modules are available to /product.
 		if m.HasProductVariant() {
-			productVariants = append(productVariants, platformVndkVersion)
+			productVariants = append(productVariants, "")
 		}
 	} else if vendorSpecific && m.SdkVersion() == "" {
 		// This will be available in /vendor (or /odm) only
-
-		// kernel_headers is a special module type whose exported headers
-		// are coming from DeviceKernelHeaders() which is always vendor
-		// dependent. They'll always have both vendor variants.
-		// For other modules, we assume that modules under proprietary
-		// paths are compatible for BOARD_VNDK_VERSION. The other modules
-		// are regarded as AOSP, which is PLATFORM_VNDK_VERSION.
-		if m.KernelHeadersDecorator() {
-			vendorVariants = append(vendorVariants,
-				platformVndkVersion,
-				boardVndkVersion,
-			)
-		} else if snapshot.IsVendorProprietaryModule(mctx) {
-			vendorVariants = append(vendorVariants, boardVndkVersion)
-		} else {
-			vendorVariants = append(vendorVariants, platformVndkVersion)
-		}
+		vendorVariants = append(vendorVariants, "")
 	} else {
 		// This is either in /system (or similar: /data), or is a
 		// module built with the NDK. Modules built with the NDK
@@ -523,7 +384,7 @@ func MutateImage(mctx android.BaseModuleContext, m ImageMutatableModule) {
 	if coreVariantNeeded && productSpecific && m.SdkVersion() == "" {
 		// The module has "product_specific: true" that does not create core variant.
 		coreVariantNeeded = false
-		productVariants = append(productVariants, platformVndkVersion)
+		productVariants = append(productVariants, "")
 	}
 
 	if m.RamdiskAvailable() {
@@ -551,15 +412,6 @@ func MutateImage(mctx android.BaseModuleContext, m ImageMutatableModule) {
 	if m.AndroidModuleBase().InstallInRecovery() {
 		recoveryVariantNeeded = true
 		coreVariantNeeded = false
-	}
-
-	// If using a snapshot, the recovery variant under AOSP directories is not needed,
-	// except for kernel headers, which needs all variants.
-	if !m.KernelHeadersDecorator() &&
-		!m.IsSnapshotPrebuilt() &&
-		usingRecoverySnapshot &&
-		!snapshot.IsRecoveryProprietaryModule(mctx) {
-		recoveryVariantNeeded = false
 	}
 
 	for _, variant := range android.FirstUniqueStrings(vendorVariants) {
@@ -675,38 +527,29 @@ func squashRamdiskSrcs(m *Module) {
 	}
 }
 
-func (c *Module) SetImageVariation(ctx android.BaseModuleContext, variant string, module android.Module) {
-	m := module.(*Module)
+func (c *Module) SetImageVariation(ctx android.BaseModuleContext, variant string) {
 	if variant == android.RamdiskVariation {
-		m.MakeAsPlatform()
-		squashRamdiskSrcs(m)
+		c.MakeAsPlatform()
+		squashRamdiskSrcs(c)
 	} else if variant == android.VendorRamdiskVariation {
-		m.MakeAsPlatform()
-		squashVendorRamdiskSrcs(m)
+		c.MakeAsPlatform()
+		squashVendorRamdiskSrcs(c)
 	} else if variant == android.RecoveryVariation {
-		m.MakeAsPlatform()
-		squashRecoverySrcs(m)
+		c.MakeAsPlatform()
+		squashRecoverySrcs(c)
 	} else if strings.HasPrefix(variant, VendorVariation) {
-		m.Properties.ImageVariation = VendorVariation
+		c.Properties.ImageVariation = VendorVariation
 
 		if strings.HasPrefix(variant, VendorVariationPrefix) {
-			m.Properties.VndkVersion = strings.TrimPrefix(variant, VendorVariationPrefix)
+			c.Properties.VndkVersion = strings.TrimPrefix(variant, VendorVariationPrefix)
 		}
-		squashVendorSrcs(m)
-
-		// Makefile shouldn't know vendor modules other than BOARD_VNDK_VERSION.
-		// Hide other vendor variants to avoid collision.
-		vndkVersion := ctx.DeviceConfig().VndkVersion()
-		if vndkVersion != "current" && vndkVersion != "" && vndkVersion != m.Properties.VndkVersion {
-			m.Properties.HideFromMake = true
-			m.HideFromMake()
-		}
+		squashVendorSrcs(c)
 	} else if strings.HasPrefix(variant, ProductVariation) {
-		m.Properties.ImageVariation = ProductVariation
+		c.Properties.ImageVariation = ProductVariation
 		if strings.HasPrefix(variant, ProductVariationPrefix) {
-			m.Properties.VndkVersion = strings.TrimPrefix(variant, ProductVariationPrefix)
+			c.Properties.VndkVersion = strings.TrimPrefix(variant, ProductVariationPrefix)
 		}
-		squashProductSrcs(m)
+		squashProductSrcs(c)
 	}
 
 	if c.NeedsVendorPublicLibraryVariants() &&
