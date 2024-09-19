@@ -1105,6 +1105,16 @@ func (c *configImpl) BuildFromTextStub() bool {
 	return !c.buildFromSourceStub
 }
 
+func (c *configImpl) TargetBuildGapps() bool {
+	if v, ok := c.environ.Get("TARGET_BUILD_GAPPS"); ok {
+		v = strings.TrimSpace(v)
+		if v == "true" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *configImpl) TargetProduct() string {
 	if v, ok := c.environ.Get("TARGET_PRODUCT"); ok {
 		return v
@@ -1508,6 +1518,10 @@ func (c *configImpl) ProductOut() string {
 
 func (c *configImpl) DevicePreviousProductConfig() string {
 	return filepath.Join(c.ProductOut(), "previous_build_config.mk")
+}
+
+func (c *configImpl) DevicePreviousGappsConfig() string {
+	return filepath.Join(c.ProductOut(), "previous_gapps_config.mk")
 }
 
 func (c *configImpl) KatiPackageMkDir() string {

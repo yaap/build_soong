@@ -172,6 +172,9 @@ func installClean(ctx Context, config Config) {
 // notice when the configuration has changed and call installClean to
 // remove the files necessary to keep things consistent.
 func installCleanIfNecessary(ctx Context, config Config) {
+	if installCleanForGappsIfNecessary(ctx, config) {
+		return
+	}
 	configFile := config.DevicePreviousProductConfig()
 	prefix := "PREVIOUS_BUILD_CONFIG := "
 	suffix := "\n"
@@ -219,6 +222,57 @@ func installCleanIfNecessary(ctx Context, config Config) {
 	installClean(ctx, config)
 
 	writeConfig()
+}
+
+func installCleanForGappsIfNecessary(ctx Context, config Config) bool {
+	configFile := config.DevicePreviousGappsConfig()
+	prefix := "PREVIOUS_GAPPS_CONFIG := "
+	suffix := "\n"
+	currentConfig := prefix + fmt.Sprintf("%t", config.TargetBuildGapps()) + suffix
+
+	ensureDirectoriesExist(ctx, filepath.Dir(configFile))
+
+	writeConfig := func() {
+		err := ioutil.WriteFile(configFile, []byte(currentConfig), 0666) // a+rw
+		if err != nil {
+			ctx.Fatalln("Failed to write gapps config:", err)
+		}
+	}
+
+	previousConfigBytes, err := ioutil.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Just write the new config file, no old config file to worry about.
+			writeConfig()
+			return false
+		} else {
+			ctx.Fatalln("Failed to read previous gapps config:", err)
+		}
+	}
+
+	previousConfig := string(previousConfigBytes)
+	if previousConfig == currentConfig {
+		// Same config as before - nothing to clean.
+		return false
+	}
+
+	if config.Environment().IsEnvTrue("DISABLE_AUTO_INSTALLCLEAN") {
+		ctx.Println("DISABLE_AUTO_INSTALLCLEAN is set and true; skipping auto-clean. Your tree may be in an inconsistent state.")
+		return false
+	}
+
+	ctx.BeginTrace(metrics.PrimaryNinja, "installclean")
+	defer ctx.EndTrace()
+
+	previousGappsValue := strings.TrimPrefix(strings.TrimSuffix(previousConfig, suffix), prefix)
+	currentGappsValue := strings.TrimPrefix(strings.TrimSuffix(currentConfig, suffix), prefix)
+
+	ctx.Printf("Gapps configuration changed: %q -> %q, forcing installclean\n", previousGappsValue, currentGappsValue)
+
+	installClean(ctx, config)
+
+	writeConfig()
+	return true
 }
 
 // cleanOldFiles takes an input file (with all paths relative to basePath), and removes files from
